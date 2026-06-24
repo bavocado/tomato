@@ -6,6 +6,10 @@ import (
 	"path/filepath"
 
 	"github.com/bavocado/tomato/pkg/config"
+	"github.com/bavocado/tomato/pkg/cost"
+	"github.com/bavocado/tomato/pkg/engine"
+	"github.com/bavocado/tomato/pkg/history"
+	"github.com/bavocado/tomato/pkg/steps"
 	"github.com/spf13/cobra"
 )
 
@@ -27,14 +31,11 @@ func NewInitCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("✓ Initialized tomato.yaml in %s\n", dir)
-
-			// Create .tomato/runs directory
 			runsDir := filepath.Join(dir, ".tomato", "runs")
 			if err := os.MkdirAll(runsDir, 0755); err != nil {
 				return fmt.Errorf("creating .tomato/runs: %w", err)
 			}
 			fmt.Printf("✓ Created .tomato/runs/\n")
-
 			return nil
 		},
 	}
@@ -46,7 +47,21 @@ func NewRunCmd() *cobra.Command {
 		Short: "Run a workflow (default: default)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
+			dir, _ := os.Getwd()
+			eng, err := engine.NewEngine(dir)
+			if err != nil {
+				return err
+			}
+			workflowName := "default"
+			if len(args) > 0 {
+				workflowName = args[0]
+			}
+			if err := eng.Run(workflowName); err != nil {
+				fmt.Fprintf(os.Stderr, "✗ workflow %q failed: %v\n", workflowName, err)
+				os.Exit(1)
+			}
+			fmt.Printf("✓ workflow %q completed\n", workflowName)
+			return nil
 		},
 	}
 }
@@ -54,10 +69,15 @@ func NewRunCmd() *cobra.Command {
 func NewSpecCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "spec",
-		Short: "Run requirements analysis",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
-		},
+		Short: "Run requirements analysis (generate PRD)",
+		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+			result := runStepWithName("spec", cfg)
+			printResult(result)
+			if !result.Success {
+				os.Exit(1)
+			}
+			return nil
+		}),
 	}
 }
 
@@ -65,9 +85,14 @@ func NewDesignCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "design",
 		Short: "Run design (architecture + UI + implementation)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
-		},
+		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+			result := runStepWithName("design", cfg)
+			printResult(result)
+			if !result.Success {
+				os.Exit(1)
+			}
+			return nil
+		}),
 	}
 }
 
@@ -75,9 +100,14 @@ func NewImplCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "impl",
 		Short: "Run code implementation",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
-		},
+		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+			result := runStepWithName("impl", cfg)
+			printResult(result)
+			if !result.Success {
+				os.Exit(1)
+			}
+			return nil
+		}),
 	}
 }
 
@@ -85,9 +115,14 @@ func NewPRCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "pr",
 		Short: "Push branch + open/update PR (draft)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
-		},
+		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+			result := runStepWithName("pr", cfg)
+			printResult(result)
+			if !result.Success {
+				os.Exit(1)
+			}
+			return nil
+		}),
 	}
 }
 
@@ -95,9 +130,14 @@ func NewReviewCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "review",
 		Short: "Single-shot code review (no loop)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
-		},
+		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+			result := runStepWithName("review", cfg)
+			printResult(result)
+			if !result.Success {
+				os.Exit(1)
+			}
+			return nil
+		}),
 	}
 }
 
@@ -105,19 +145,29 @@ func NewTestCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "test",
 		Short: "Generate and run tests",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
-		},
+		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+			result := runStepWithName("test", cfg)
+			printResult(result)
+			if !result.Success {
+				os.Exit(1)
+			}
+			return nil
+		}),
 	}
 }
 
 func NewTaskCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "task",
-		Short: "Sync external tasks",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
-		},
+		Short: "Sync external tasks via adapter",
+		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+			result := runStepWithName("task", cfg)
+			printResult(result)
+			if !result.Success {
+				os.Exit(1)
+			}
+			return nil
+		}),
 	}
 }
 
@@ -127,7 +177,33 @@ func NewHistoryCmd() *cobra.Command {
 		Short: "List past runs or show one run",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
+			dir, _ := os.Getwd()
+			if len(args) > 0 {
+				output, err := history.Show(dir, args[0])
+				if err != nil {
+					return err
+				}
+				fmt.Print(output)
+			} else {
+				runs, err := history.List(dir)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("%-30s %-12s %-12s %6s %s\n", "Run ID", "Step", "Model", "Tokens", "Status")
+				for _, r := range runs {
+					status := "✓"
+					if !r.Success {
+						status = "✗"
+					}
+					cache := ""
+					if r.CacheHit {
+						cache = " [cache]"
+					}
+					fmt.Printf("%-30s %-12s %-12s %6d %s%s\n",
+						r.RunID, r.StepName, r.ModelUsed, r.TokensIn+r.TokensOut, status, cache)
+				}
+			}
+			return nil
 		},
 	}
 }
@@ -137,7 +213,13 @@ func NewCostCmd() *cobra.Command {
 		Use:   "cost",
 		Short: "Cumulative cost summary",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
+			dir, _ := os.Getwd()
+			s, err := cost.Compute(dir)
+			if err != nil {
+				return err
+			}
+			fmt.Print(s.Format())
+			return nil
 		},
 	}
 }
@@ -145,9 +227,29 @@ func NewCostCmd() *cobra.Command {
 func NewConfigCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "config",
-		Short: "View/edit config (including API key status)",
+		Short: "View config and API key status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
+			dir, _ := os.Getwd()
+			cfg, err := config.Load(dir)
+			if err != nil {
+				return fmt.Errorf("loading config: %w\nRun `tomato init` first", err)
+			}
+			fmt.Printf("Models:\n")
+			fmt.Printf("  default: %s\n", cfg.Models.Default)
+			for step, model := range cfg.Models.Steps {
+				fmt.Printf("  %s: %s\n", step, model)
+			}
+			fmt.Printf("\nBudget: %s\n", cfg.Budget.Mode)
+			fmt.Printf("\nAPI keys:\n")
+			for _, provider := range []string{"OPENAI", "GLM", "DEEPSEEK"} {
+				key := os.Getenv(provider + "_API_KEY")
+				if key != "" {
+					fmt.Printf("  %s: ✓ configured (%s...)\n", provider, key[:min(8, len(key))])
+				} else {
+					fmt.Printf("  %s: ✗ not set\n", provider)
+				}
+			}
+			return nil
 		},
 	}
 }

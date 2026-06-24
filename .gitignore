@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+*.swp
+*.swo
+
+# Tomato runtime data
+.tomato/
+
+# Environment / secrets
+.env
+.env.*
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.iml

@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
+	"github.com/bavocado/tomato/pkg/config"
 	"github.com/spf13/cobra"
 )
 
@@ -11,7 +14,28 @@ func NewInitCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Initialize tomato.yaml in the current repo",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented yet")
+			dir, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			path := filepath.Join(dir, "tomato.yaml")
+			if _, err := os.Stat(path); err == nil {
+				return fmt.Errorf("tomato.yaml already exists in %s", dir)
+			}
+			cfg := config.Default()
+			if err := config.Save(cfg, path); err != nil {
+				return err
+			}
+			fmt.Printf("✓ Initialized tomato.yaml in %s\n", dir)
+
+			// Create .tomato/runs directory
+			runsDir := filepath.Join(dir, ".tomato", "runs")
+			if err := os.MkdirAll(runsDir, 0755); err != nil {
+				return fmt.Errorf("creating .tomato/runs: %w", err)
+			}
+			fmt.Printf("✓ Created .tomato/runs/\n")
+
+			return nil
 		},
 	}
 }

@@ -85,8 +85,10 @@ func TestNewProvider(t *testing.T) {
 		{"invalid", true},
 	}
 
-	for _, tt := range tests {
-		p, err := NewProvider(tt.modelID, "test-key")
+for _, tt := range tests {
+			p, err := NewProvider(ProviderConfig{
+				ModelID: tt.modelID,
+			})
 		if tt.wantErr {
 			if err == nil {
 				t.Errorf("expected error for %s", tt.modelID)

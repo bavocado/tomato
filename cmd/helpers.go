@@ -13,30 +13,33 @@ import (
 )
 
 func withFeatureAndModel(fn func(*steps.StepConfig, []string) error) func(*cobra.Command, []string) error {
-	return func(cmd *cobra.Command, args []string) error {
-		dir, _ := os.Getwd()
-		cfg, err := config.Load(dir)
-		if err != nil {
-			return fmt.Errorf("loading config: %w\nRun `tomato init` first", err)
+		return func(cmd *cobra.Command, args []string) error {
+			dir, _ := os.Getwd()
+			cfg, err := config.Load(dir)
+			if err != nil {
+				return fmt.Errorf("loading config: %w\nRun `tomato init` first", err)
+			}
+
+			stepName := cmd.Use
+			modelID := resolveModelForStep(stepName, cfg)
+			apiKey := os.Getenv(llm.EnvKeyName(extractProvider(modelID)))
+
+			featureDir := filepath.Join(dir, "docs", "specs", "current-feature")
+			stepCfg := &steps.StepConfig{
+				RepoDir:        dir,
+				FeatureDir:     featureDir,
+				Feature:        "current-feature",
+				ModelName:      modelID,
+				APIKey:         apiKey,
+				AnthropicURL:   cfg.Anthropic.BaseURL,
+				AnthropicKey:   cfg.Anthropic.AuthToken,
+				AnthropicModel: cfg.Anthropic.Model,
+			}
+			stepCfg.LLMStream = steps.NewLLMStream(stepCfg)
+
+			return fn(stepCfg, args)
 		}
-
-		stepName := cmd.Use
-		modelID := resolveModelForStep(stepName, cfg)
-		apiKey := os.Getenv(llm.EnvKeyName(extractProvider(modelID)))
-
-		featureDir := filepath.Join(dir, "docs", "specs", "current-feature")
-		stepCfg := &steps.StepConfig{
-			RepoDir:       dir,
-			FeatureDir:    featureDir,
-			Feature:       "current-feature",
-			ModelName:     modelID,
-			APIKey:        apiKey,
-			LLMStream:     steps.NewLLMStream(modelID, apiKey),
-		}
-
-		return fn(stepCfg, args)
 	}
-}
 
 func resolveModelForStep(stepName string, cfg *config.Config) string {
 	if m, ok := cfg.Models.Steps[stepName]; ok {

@@ -91,14 +91,17 @@ func (e *Engine) Run(workflowName string) error {
 			return fmt.Errorf("step %d (%s): %w", i, stepCfg.Name, err)
 		}
 
-		featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
-		stepConfig := &steps.StepConfig{
-			RepoDir:    e.RepoDir,
-			FeatureDir: featureDir,
-			Feature:    "current-feature",
-			ModelName:  e.resolveModel(stepCfg.Name),
-			LLMStream:  steps.NewLLMStream(e.resolveModel(stepCfg.Name), os.Getenv("OPENAI_API_KEY")),
-		}
+featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
+			stepConfig := &steps.StepConfig{
+				RepoDir:        e.RepoDir,
+				FeatureDir:     featureDir,
+				Feature:        "current-feature",
+				ModelName:      e.resolveModel(stepCfg.Name),
+				AnthropicURL:   e.Config.Anthropic.BaseURL,
+				AnthropicKey:   e.Config.Anthropic.AuthToken,
+				AnthropicModel: e.Config.Anthropic.Model,
+			}
+			stepConfig.LLMStream = steps.NewLLMStream(stepConfig)
 
 		result := stepFn(stepConfig, nil)
 		if !result.Success {
@@ -127,13 +130,16 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 	for round := 1; round <= maxRounds+1; round++ {
 		featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
 
-		reviewCfg := &steps.StepConfig{
-			RepoDir:    e.RepoDir,
-			FeatureDir: featureDir,
-			Feature:    "current-feature",
-			ModelName:  e.resolveModel("review"),
-			LLMStream:  steps.NewLLMStream(e.resolveModel("review"), os.Getenv("OPENAI_API_KEY")),
-		}
+reviewCfg := &steps.StepConfig{
+				RepoDir:        e.RepoDir,
+				FeatureDir:     featureDir,
+				Feature:        "current-feature",
+				ModelName:      e.resolveModel("review"),
+				AnthropicURL:   e.Config.Anthropic.BaseURL,
+				AnthropicKey:   e.Config.Anthropic.AuthToken,
+				AnthropicModel: e.Config.Anthropic.Model,
+			}
+			reviewCfg.LLMStream = steps.NewLLMStream(reviewCfg)
 
 		fmt.Printf("  review round %d...\n", round)
 		result := reviewFn(reviewCfg, []string{fmt.Sprintf("r%d", round)})
@@ -150,13 +156,16 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 
 		if round <= maxRounds {
 			fmt.Printf("  → round %d found blocking issues, fixing...\n", round)
-			implCfg := &steps.StepConfig{
-				RepoDir:    e.RepoDir,
-				FeatureDir: featureDir,
-				Feature:    "current-feature",
-				ModelName:  e.resolveModel("impl"),
-				LLMStream:  steps.NewLLMStream(e.resolveModel("impl"), os.Getenv("OPENAI_API_KEY")),
-			}
+implCfg := &steps.StepConfig{
+					RepoDir:        e.RepoDir,
+					FeatureDir:     featureDir,
+					Feature:        "current-feature",
+					ModelName:      e.resolveModel("impl"),
+					AnthropicURL:   e.Config.Anthropic.BaseURL,
+					AnthropicKey:   e.Config.Anthropic.AuthToken,
+					AnthropicModel: e.Config.Anthropic.Model,
+				}
+				implCfg.LLMStream = steps.NewLLMStream(implCfg)
 			fixResult := implFn(implCfg, nil)
 			if !fixResult.Success {
 				return fmt.Errorf("fix round %d failed: %s", round, fixResult.Error)

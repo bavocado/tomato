@@ -12,13 +12,17 @@ import (
 
 // StepConfig is the minimal config for running a step.
 type StepConfig struct {
-	RepoDir       string
-	FeatureDir    string
-	Feature       string
-	ModelName     string
-	APIKey        string
-	PromptVersion string
-	LLMStream     runner.LLMFunc
+	RepoDir        string
+	FeatureDir     string
+	Feature        string
+	ModelName      string
+	APIKey         string
+	PromptVersion  string
+	LLMStream      runner.LLMFunc
+	// Anthropic-specific connection parameters (from tomato.yaml)
+	AnthropicURL   string
+	AnthropicKey   string
+	AnthropicModel string
 }
 
 // StepFunc is a function that executes a step and returns a result.
@@ -47,14 +51,20 @@ func Get(name string) (StepFunc, error) {
 	return fn, nil
 }
 
-// NewLLMStream creates a streaming function from model ID + API key.
-func NewLLMStream(modelID, apiKey string) runner.LLMFunc {
+// NewLLMStream creates a streaming function from a StepConfig (supports all providers).
+func NewLLMStream(cfg *StepConfig) runner.LLMFunc {
 	return func(messages []runner.Message, onChunk func(string)) error {
 		llmMessages := make([]llm.Message, len(messages))
 		for i, m := range messages {
 			llmMessages[i] = llm.Message{Role: m.Role, Content: m.Content}
 		}
-		provider, err := llm.NewProvider(modelID, apiKey)
+		provider, err := llm.NewProvider(llm.ProviderConfig{
+			ModelID:        cfg.ModelName,
+			APIKey:         cfg.APIKey,
+			AnthropicURL:   cfg.AnthropicURL,
+			AnthropicKey:   cfg.AnthropicKey,
+			AnthropicModel: cfg.AnthropicModel,
+		})
 		if err != nil {
 			return err
 		}

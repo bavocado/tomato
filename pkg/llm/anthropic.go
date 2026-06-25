@@ -7,16 +7,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 )
 
+// AnthropicOpts carries all connection parameters for the Anthropic provider.
+type AnthropicOpts struct {
+	BaseURL   string
+	AuthToken string
+	ModelName string
+}
+
 // AnthropicProvider implements Provider using Anthropic's native Messages API.
-// Configured via environment variables:
-//
-//	ANTHROPIC_BASE_URL    — API endpoint (default: https://api.anthropic.com)
-//	ANTHROPIC_AUTH_TOKEN  — API key sent as x-api-key header
-//	ANTHROPIC_MODEL       — model name sent in the request body
 type AnthropicProvider struct {
 	BaseURL   string
 	AuthToken string
@@ -141,38 +142,19 @@ func (p *AnthropicProvider) Stream(messages []Message, onChunk func(string)) err
 	return scanner.Err()
 }
 
-// NewAnthropicProvider creates an AnthropicProvider from environment variables.
-func NewAnthropicProvider(modelID string) (*AnthropicProvider, error) {
-	authToken := getEnv("ANTHROPIC_AUTH_TOKEN", "")
-	if authToken == "" {
-		return nil, fmt.Errorf("ANTHROPIC_AUTH_TOKEN environment variable is required")
+// NewAnthropicProvider creates an AnthropicProvider from explicitly provided options.
+func NewAnthropicProvider(opts AnthropicOpts) (*AnthropicProvider, error) {
+	baseURL := strings.TrimRight(opts.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = "https://api.anthropic.com"
 	}
-
-	baseURL := getEnv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-	// Strip trailing slash
-	baseURL = strings.TrimRight(baseURL, "/")
-
-	modelName := getEnv("ANTHROPIC_MODEL", "")
+	modelName := opts.ModelName
 	if modelName == "" {
-		// Fall back to the model part of modelID (e.g. "anthropic/claude-sonnet-4-20250514")
-		parts := strings.SplitN(modelID, "/", 2)
-		if len(parts) == 2 {
-			modelName = parts[1]
-		} else {
-			modelName = "claude-sonnet-4-20250514"
-		}
+		modelName = "claude-sonnet-4-20250514"
 	}
-
 	return &AnthropicProvider{
 		BaseURL:   baseURL,
-		AuthToken: authToken,
+		AuthToken: opts.AuthToken,
 		ModelName: modelName,
 	}, nil
-}
-
-func getEnv(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
 }

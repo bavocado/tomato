@@ -11,6 +11,7 @@ import (
 // Config is the root of tomato.yaml.
 type Config struct {
 	Models    ModelsConfig            `yaml:"models"`
+	Anthropic AnthropicConfig         `yaml:"anthropic"`
 	Budget    BudgetConfig            `yaml:"budget"`
 	Workflows map[string]WorkflowDef  `yaml:"workflows"`
 	Adapters  map[string]AdapterDef   `yaml:"adapters"`
@@ -21,6 +22,13 @@ type Config struct {
 type ModelsConfig struct {
 	Default string            `yaml:"default"`
 	Steps   map[string]string `yaml:"steps"`
+}
+
+// AnthropicConfig defines connection parameters for Anthropic's native API.
+type AnthropicConfig struct {
+	BaseURL   string `yaml:"base_url"`
+	AuthToken string `yaml:"auth_token"`
+	Model     string `yaml:"model"`
 }
 
 // BudgetConfig defines token budget limits.
@@ -171,18 +179,23 @@ func Save(cfg *Config, path string) error {
 }
 
 // Default returns the default configuration with the balanced preset.
-	func Default() *Config {
-		return &Config{
-			Models: ModelsConfig{
-				Default: "openai/gpt-5",
-				Steps: map[string]string{
-					"spec":   "anthropic/claude-sonnet-4-20250514",
-					"design": "anthropic/claude-sonnet-4-20250514",
-					"impl":   "anthropic/claude-sonnet-4-20250514",
-					"review": "anthropic/claude-sonnet-4-20250514",
-					"test":   "openai/gpt-5",
+func Default() *Config {
+			return &Config{
+				Models: ModelsConfig{
+					Default: "openai/gpt-5",
+					Steps: map[string]string{
+						"spec":   "anthropic/claude-sonnet-4-20250514",
+						"design": "anthropic/claude-sonnet-4-20250514",
+						"impl":   "anthropic/claude-sonnet-4-20250514",
+						"review": "anthropic/claude-sonnet-4-20250514",
+						"test":   "openai/gpt-5",
+					},
 				},
-			},
+				Anthropic: AnthropicConfig{
+					BaseURL:   "https://api.anthropic.com",
+					AuthToken: "",
+					Model:     "claude-sonnet-4-20250514",
+				},
 		Budget: BudgetConfig{
 			Mode:         "balanced",
 			GlobalPerRun: 300000,

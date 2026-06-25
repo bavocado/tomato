@@ -95,13 +95,13 @@ func (p *OpenAIProvider) Stream(messages []Message, onChunk func(string)) error 
 	return scanner.Err()
 }
 
-// NewProvider creates a Provider from a model identifier string.
+// NewProvider creates a Provider from a ProviderConfig.
 // Format: "provider/model", e.g., "openai/gpt-5", "glm/glm-5.2", "deepseek/deepseek-4pro", "anthropic/claude-sonnet-4".
 // openai/glm/deepseek use the OpenAI-compatible protocol; anthropic uses its native Messages API.
-func NewProvider(modelID, apiKey string) (Provider, error) {
-	parts := strings.SplitN(modelID, "/", 2)
+func NewProvider(cfg ProviderConfig) (Provider, error) {
+	parts := strings.SplitN(cfg.ModelID, "/", 2)
 	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid model format %q, expected provider/model", modelID)
+		return nil, fmt.Errorf("invalid model format %q, expected provider/model", cfg.ModelID)
 	}
 
 	providerName := parts[0]
@@ -109,13 +109,17 @@ func NewProvider(modelID, apiKey string) (Provider, error) {
 
 	// Anthropic uses native Messages API (not OpenAI-compatible)
 	if providerName == "anthropic" {
-		return NewAnthropicProvider(modelID)
+		return NewAnthropicProvider(AnthropicOpts{
+			AuthToken: cfg.AnthropicKey,
+			BaseURL:   cfg.AnthropicURL,
+			ModelName: cfg.AnthropicModel,
+		})
 	}
 
 	baseURL := defaultBaseURL(providerName)
 	return &OpenAIProvider{
 		BaseURL:   baseURL,
-		APIKey:    apiKey,
+		APIKey:    cfg.APIKey,
 		modelName: modelName,
 	}, nil
 }

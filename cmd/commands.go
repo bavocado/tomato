@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/bavocado/tomato/pkg/config"
 	"github.com/bavocado/tomato/pkg/cost"
@@ -36,9 +37,32 @@ func NewInitCmd() *cobra.Command {
 				return fmt.Errorf("creating .tomato/runs: %w", err)
 			}
 			fmt.Printf("✓ Created .tomato/runs/\n")
+
+			// Warn about auth_token in git-tracked file
+			gitignorePath := filepath.Join(dir, ".gitignore")
+			if !isTomatoYamlIgnored(gitignorePath) {
+				fmt.Println("⚠  WARNING: tomato.yaml contains auth_token in plain text.")
+				fmt.Println("   Add 'tomato.yaml' to your .gitignore or use env vars in CI.")
+			}
+
 			return nil
 		},
 	}
+}
+
+func isTomatoYamlIgnored(gitignorePath string) bool {
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		return false
+	}
+	content := string(data)
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "tomato.yaml" {
+			return true
+		}
+	}
+	return false
 }
 
 func NewRunCmd() *cobra.Command {

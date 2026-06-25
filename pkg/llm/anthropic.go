@@ -3,158 +3,140 @@ package llm
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"os"
+	"os/exec"
 	"strings"
 )
 
-// AnthropicOpts carries all connection parameters for the Anthropic provider.
-type AnthropicOpts struct {
-	BaseURL   string
-	AuthToken string
-	ModelName string
+// ClaudeCLIProvider runs the `claude` CLI tool to execute AI tasks.
+// It forks the `claude` binary with:
+//   --print --permission-mode auto --effort high
+// The prompt is passed via stdin.
+// ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL are set
+// as environment variables from the yaml config (can be overridden by env).
+type ClaudeCLIProvider struct {
+	ModelName    string
+	BaseURL      string
+	AuthToken    string
+	ClaudeModel  string
 }
 
-// AnthropicProvider implements Provider using Anthropic's native Messages API.
-type AnthropicProvider struct {
-	BaseURL   string
-	AuthToken string
-	ModelName string
-}
-
-// anthropicRequest is the Messages API request body.
-type anthropicRequest struct {
-	Model     string          `json:"model"`
-	MaxTokens int             `json:"max_tokens"`
-	Messages  []anthropicMsg  `json:"messages"`
-	Stream    bool            `json:"stream"`
-}
-
-type anthropicMsg struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// anthropicStreamEvent matches a single SSE event line.
-type anthropicStreamEvent struct {
-	Type  string          `json:"type"`
-	Index int             `json:"index,omitempty"`
-	Delta *anthropicDelta `json:"delta,omitempty"`
-}
-
-type anthropicDelta struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-func (p *AnthropicProvider) Model() string {
+func (p *ClaudeCLIProvider) Model() string {
 	return p.ModelName
 }
 
-func (p *AnthropicProvider) Stream(messages []Message, onChunk func(string)) error {
-	// Convert generic Messages to Anthropic format
-	anthroMsgs := make([]anthropicMsg, len(messages))
-	for i, m := range messages {
-		role := m.Role
-		// Anthropic uses "assistant" for assistant messages; "system" is not in the messages array
-		// but is sent separately — we skip system role here and prepend it as system prompt
-		if role == "system" {
-			// We'll handle system via a separate system parameter below
-			role = "user"
-		}
-		anthroMsgs[i] = anthropicMsg{Role: role, Content: m.Content}
+func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) error {
+	prompt := buildClaudePrompt(messages)
+
+	args := []string{
+		"--print",
+		"--permission-mode", "auto",
+		"--effort", "high",
+	}
+	if p.ModelName != "" {
+		args = append(args, "--model", p.ModelName)
 	}
 
-	// Find the system message and separate it
-	var systemPrompt string
-	for _, m := range messages {
-		if m.Role == "system" {
-			systemPrompt = m.Content
+	cmd := exec.Command("claude", args...)
+	cmd.Stdin = strings.NewReader(prompt)
+
+	// Forward env from parent, then override with yaml config values
+	env := os.Environ()
+	if p.BaseURL != "" {
+		env = append(env, "ANTHROPIC_BASE_URL="+p.BaseURL)
+	}
+	if p.AuthToken != "" {
+		env = append(env, "ANTHROPIC_AUTH_TOKEN="+p.AuthToken)
+	}
+	if p.ClaudeModel != "" {
+		env = append(env, "ANTHROPIC_MODEL="+p.ClaudeModel)
+	}
+	cmd.Env = env
+
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("creating claude stdout pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("starting claude: %w", err)
+	}
+
+	// Stream stdout in chunks to onChunk for progressive output
+	const chunkSize = 120
+	reader := bufio.NewReader(stdout)
+	buf := make([]byte, chunkSize)
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			onChunk(string(buf[:n]))
+		}
+		if err != nil {
 			break
 		}
 	}
 
-	body := anthropicRequest{
-		Model:     p.ModelName,
-		MaxTokens: 4096,
-		Messages:  anthroMsgs,
-		Stream:    true,
-	}
-
-	jsonData, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("marshaling anthropic request: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", p.BaseURL+"/v1/messages", bytes.NewReader(jsonData))
-	if err != nil {
-		return fmt.Errorf("creating anthropic request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", p.AuthToken)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	if systemPrompt != "" {
-		req.Header.Set("anthropic-system-prompt", systemPrompt)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("calling Anthropic: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("Anthropic returned status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	// Anthropic SSE format:
-	//   event: content_block_delta
-	//   data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
-	scanner := bufio.NewScanner(resp.Body)
-	var currentEvent string
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if strings.HasPrefix(line, "event: ") {
-			currentEvent = strings.TrimPrefix(line, "event: ")
-			continue
+	waitErr := cmd.Wait()
+	if waitErr != nil {
+		stderrStr := strings.TrimSpace(stderrBuf.String())
+		if stderrStr != "" {
+			return fmt.Errorf("claude exited with error: %s", stderrStr)
 		}
-
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
-			if currentEvent != "content_block_delta" {
-				continue
-			}
-
-			var event anthropicStreamEvent
-			if err := json.Unmarshal([]byte(data), &event); err != nil {
-				continue
-			}
-			if event.Delta != nil && event.Delta.Type == "text_delta" {
-				onChunk(event.Delta.Text)
-			}
-		}
+		return fmt.Errorf("claude exited: %w", waitErr)
 	}
 
-	return scanner.Err()
+	return nil
 }
 
-// NewAnthropicProvider creates an AnthropicProvider from explicitly provided options.
-func NewAnthropicProvider(opts AnthropicOpts) (*AnthropicProvider, error) {
-	baseURL := strings.TrimRight(opts.BaseURL, "/")
-	if baseURL == "" {
-		baseURL = "https://api.anthropic.com"
+// buildClaudePrompt concatenates messages into a single prompt text.
+func buildClaudePrompt(messages []Message) string {
+	var b strings.Builder
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			b.WriteString("System: ")
+			b.WriteString(msg.Content)
+			b.WriteString("\n\n")
+		} else if msg.Role == "assistant" {
+			b.WriteString("Assistant: ")
+			b.WriteString(msg.Content)
+			b.WriteString("\n\n")
+		} else {
+			b.WriteString("User: ")
+			b.WriteString(msg.Content)
+			b.WriteString("\n\n")
+		}
 	}
-	modelName := opts.ModelName
+	b.WriteString("Assistant:")
+	return b.String()
+}
+
+// NewClaudeCLIProvider creates a provider that shells out to the `claude` CLI.
+// baseURL / authToken / claudeModel come from tomato.yaml's `anthropic:` section.
+func NewClaudeCLIProvider(modelID, baseURL, authToken, claudeModel string) (*ClaudeCLIProvider, error) {
+	// Check if claude is available on PATH
+	if _, err := exec.LookPath("claude"); err != nil {
+		return nil, fmt.Errorf("claude CLI not found on PATH (install via: npm i -g @anthropic-ai/claude-code): %w", err)
+	}
+
+	modelName := claudeModel
 	if modelName == "" {
-		modelName = "claude-sonnet-4-20250514"
+		modelName = os.Getenv("ANTHROPIC_MODEL")
 	}
-	return &AnthropicProvider{
-		BaseURL:   baseURL,
-		AuthToken: opts.AuthToken,
-		ModelName: modelName,
+	if modelName == "" {
+		parts := strings.SplitN(modelID, "/", 2)
+		if len(parts) == 2 {
+			modelName = parts[1]
+		}
+	}
+
+	return &ClaudeCLIProvider{
+		ModelName:   modelName,
+		BaseURL:     baseURL,
+		AuthToken:   authToken,
+		ClaudeModel: claudeModel,
 	}, nil
 }

@@ -96,8 +96,8 @@ func (p *OpenAIProvider) Stream(messages []Message, onChunk func(string)) error 
 }
 
 // NewProvider creates a Provider from a ProviderConfig.
-// Format: "provider/model", e.g., "openai/gpt-5", "glm/glm-5.2", "deepseek/deepseek-4pro", "anthropic/claude-sonnet-4".
-// openai/glm/deepseek use the OpenAI-compatible protocol; anthropic uses its native Messages API.
+// "anthropic/*" models use the `claude` CLI tool (fork/exec).
+// Other models use the OpenAI-compatible HTTP protocol.
 func NewProvider(cfg ProviderConfig) (Provider, error) {
 	parts := strings.SplitN(cfg.ModelID, "/", 2)
 	if len(parts) != 2 {
@@ -105,17 +105,13 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 	}
 
 	providerName := parts[0]
-	modelName := parts[1]
 
-	// Anthropic uses native Messages API (not OpenAI-compatible)
+	// Anthropic uses the `claude` CLI tool
 	if providerName == "anthropic" {
-		return NewAnthropicProvider(AnthropicOpts{
-			AuthToken: cfg.AnthropicKey,
-			BaseURL:   cfg.AnthropicURL,
-			ModelName: cfg.AnthropicModel,
-		})
+		return NewClaudeCLIProvider(cfg.ModelID, cfg.AnthropicURL, cfg.AnthropicKey, cfg.AnthropicModel)
 	}
 
+	modelName := parts[1]
 	baseURL := defaultBaseURL(providerName)
 	return &OpenAIProvider{
 		BaseURL:   baseURL,

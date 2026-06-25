@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build all targets
+        run: |
+          mkdir -p dist
+
+          targets="darwin/arm64 darwin/amd64 linux/arm64 linux/amd64"
+          for target in $targets; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            ext=".tar.gz"
+            [ "$os" = "darwin" ] && ext=".zip"
+
+            GOOS=$os GOARCH=$arch go build -o "dist/tomato_${os}_${arch}" .
+            cd adapters/github-tomato-adapter
+            GOOS=$os GOARCH=$arch go build -o "../../dist/github-tomato-adapter_${os}_${arch}" .
+            cd ../..
+
+            cd dist
+            archive="tomato_${os}_${arch}${ext}"
+            adapter_archive="github-tomato-adapter_${os}_${arch}${ext}"
+            if [ "$os" = "darwin" ]; then
+              zip "$archive" "tomato_${os}_${arch}"
+              zip "$adapter_archive" "github-tomato-adapter_${os}_${arch}"
+            else
+              tar czf "$archive" "tomato_${os}_${arch}"
+              tar czf "$adapter_archive" "github-tomato-adapter_${os}_${arch}"
+            fi
+            rm "tomato_${os}_${arch}" "github-tomato-adapter_${os}_${arch}"
+            cd ..
+          done
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum *.zip *.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release
+        run: |
+          TAG="build-$(date +%Y%m%d)-${GITHUB_SHA::7}"
+          gh release create "$TAG" \
+            --title "Build $TAG" \
+            --notes "Auto-built from commit ${GITHUB_SHA} on main." \
+            dist/*.zip dist/*.tar.gz dist/checksums.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -144,9 +144,9 @@ func Parse(data []byte) (*Config, error) {
 			return nil, fmt.Errorf("workflow %q has no steps", name)
 		}
 	}
-	if cfg.Models.Default == "" {
-		cfg.Models.Default = "deepseek/deepseek-4pro"
-	}
+if cfg.Models.Default == "" {
+			cfg.Models.Default = "anthropic/claude-sonnet-4-20250514"
+		}
 
 	return cfg, nil
 }
@@ -171,18 +171,18 @@ func Save(cfg *Config, path string) error {
 }
 
 // Default returns the default configuration with the balanced preset.
-func Default() *Config {
-	return &Config{
-		Models: ModelsConfig{
-			Default: "deepseek/deepseek-4pro",
-			Steps: map[string]string{
-				"spec":   "openai/gpt-5",
-				"design": "openai/gpt-5",
-				"impl":   "glm/glm-5.2",
-				"review": "glm/glm-5.2",
-				"test":   "deepseek/deepseek-4pro",
+	func Default() *Config {
+		return &Config{
+			Models: ModelsConfig{
+				Default: "openai/gpt-5",
+				Steps: map[string]string{
+					"spec":   "anthropic/claude-sonnet-4-20250514",
+					"design": "anthropic/claude-sonnet-4-20250514",
+					"impl":   "anthropic/claude-sonnet-4-20250514",
+					"review": "anthropic/claude-sonnet-4-20250514",
+					"test":   "openai/gpt-5",
+				},
 			},
-		},
 		Budget: BudgetConfig{
 			Mode:         "balanced",
 			GlobalPerRun: 300000,

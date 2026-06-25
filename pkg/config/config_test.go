@@ -69,14 +69,14 @@ workflows:
 }
 
 func TestDefaultConfig(t *testing.T) {
-	cfg := Default()
-	if cfg.Models.Default != "deepseek/deepseek-4pro" {
-		t.Errorf("expected default model deepseek/deepseek-4pro, got %s", cfg.Models.Default)
+		cfg := Default()
+		if cfg.Models.Default != "openai/gpt-5" {
+			t.Errorf("expected default model openai/gpt-5, got %s", cfg.Models.Default)
+		}
+		if _, ok := cfg.Workflows["default"]; !ok {
+			t.Error("default workflow should exist")
+		}
 	}
-	if _, ok := cfg.Workflows["default"]; !ok {
-		t.Error("default workflow should exist")
-	}
-}
 
 func TestSaveAndLoadConfig(t *testing.T) {
 	dir := t.TempDir()

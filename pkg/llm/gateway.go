@@ -96,8 +96,8 @@ func (p *OpenAIProvider) Stream(messages []Message, onChunk func(string)) error 
 }
 
 // NewProvider creates a Provider from a model identifier string.
-// Format: "provider/model", e.g., "openai/gpt-5", "glm/glm-5.2", "deepseek/deepseek-4pro".
-// All use the OpenAI-compatible protocol; only base_url differs.
+// Format: "provider/model", e.g., "openai/gpt-5", "glm/glm-5.2", "deepseek/deepseek-4pro", "anthropic/claude-sonnet-4".
+// openai/glm/deepseek use the OpenAI-compatible protocol; anthropic uses its native Messages API.
 func NewProvider(modelID, apiKey string) (Provider, error) {
 	parts := strings.SplitN(modelID, "/", 2)
 	if len(parts) != 2 {
@@ -107,10 +107,15 @@ func NewProvider(modelID, apiKey string) (Provider, error) {
 	providerName := parts[0]
 	modelName := parts[1]
 
+	// Anthropic uses native Messages API (not OpenAI-compatible)
+	if providerName == "anthropic" {
+		return NewAnthropicProvider(modelID)
+	}
+
 	baseURL := defaultBaseURL(providerName)
 	return &OpenAIProvider{
-		BaseURL: baseURL,
-		APIKey:  apiKey,
+		BaseURL:   baseURL,
+		APIKey:    apiKey,
 		modelName: modelName,
 	}, nil
 }
@@ -129,8 +134,11 @@ func defaultBaseURL(provider string) string {
 	return "https://api.openai.com/v1"
 }
 
-// EnvKeyName returns the environment variable name for a provider's API key.
+// EnvKeyName returns the environment variable name for a provider's API key/token.
 func EnvKeyName(provider string) string {
+	if provider == "anthropic" {
+		return "ANTHROPIC_AUTH_TOKEN"
+	}
 	return fmt.Sprintf("%s_API_KEY", strings.ToUpper(strings.ReplaceAll(provider, "-", "_")))
 }
 

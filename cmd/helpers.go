@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/bavocado/tomato/pkg/budget"
 	"github.com/bavocado/tomato/pkg/config"
 	"github.com/bavocado/tomato/pkg/llm"
 	"github.com/bavocado/tomato/pkg/model"
@@ -24,6 +25,16 @@ func withFeatureAndModel(fn func(*steps.StepConfig, []string) error) func(*cobra
 			modelID := resolveModelForStep(stepName, cfg)
 			apiKey := os.Getenv(llm.EnvKeyName(extractProvider(modelID)))
 
+			// Initialize per-command budget tracker
+			tracker := budget.NewTracker()
+			tracker.InitFromConfig(
+				cfg.Budget.Mode,
+				cfg.Budget.PerStep,
+				cfg.Budget.GlobalPerRun,
+				cfg.Budget.OnExceed,
+				cfg.Budget.DegradeTo,
+			)
+
 			featureDir := filepath.Join(dir, "docs", "specs", "current-feature")
 			stepCfg := &steps.StepConfig{
 				RepoDir:        dir,
@@ -34,6 +45,7 @@ func withFeatureAndModel(fn func(*steps.StepConfig, []string) error) func(*cobra
 				AnthropicURL:   cfg.Anthropic.BaseURL,
 				AnthropicKey:   cfg.Anthropic.AuthToken,
 				AnthropicModel: cfg.Anthropic.Model,
+				BudgetTracker:  tracker,
 			}
 			stepCfg.LLMStream = steps.NewLLMStream(stepCfg)
 

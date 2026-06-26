@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -258,22 +259,47 @@ func NewConfigCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading config: %w\nRun `tomato init` first", err)
 			}
-			fmt.Printf("Models:\n")
-			fmt.Printf("  default: %s\n", cfg.Models.Default)
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Models:\n")
+			fmt.Fprintf(out, "  default: %s\n", cfg.Models.Default)
 			for step, model := range cfg.Models.Steps {
-				fmt.Printf("  %s: %s\n", step, model)
+				fmt.Fprintf(out, "  %s: %s\n", step, model)
 			}
-			fmt.Printf("\nBudget: %s\n", cfg.Budget.Mode)
-			fmt.Printf("\nAPI keys:\n")
+			fmt.Fprintf(out, "\nAnthropic:\n")
+			printConfiguredValue(out, "  base_url", cfg.Anthropic.BaseURL)
+			if cfg.Anthropic.AuthToken != "" {
+				fmt.Fprintf(out, "  auth_token: ✓ configured (%s)\n", maskSecret(cfg.Anthropic.AuthToken))
+			} else {
+				fmt.Fprintf(out, "  auth_token: ✗ not set\n")
+			}
+			printConfiguredValue(out, "  model", cfg.Anthropic.Model)
+
+			fmt.Fprintf(out, "\nBudget: %s\n", cfg.Budget.Mode)
+			fmt.Fprintf(out, "\nAPI keys:\n")
 			for _, provider := range []string{"OPENAI", "GLM", "DEEPSEEK"} {
 				key := os.Getenv(provider + "_API_KEY")
 				if key != "" {
-					fmt.Printf("  %s: ✓ configured (%s...)\n", provider, key[:min(8, len(key))])
+					fmt.Fprintf(out, "  %s: ✓ configured (%s)\n", provider, maskSecret(key))
 				} else {
-					fmt.Printf("  %s: ✗ not set\n", provider)
+					fmt.Fprintf(out, "  %s: ✗ not set\n", provider)
 				}
 			}
 			return nil
 		},
 	}
+}
+
+func printConfiguredValue(out io.Writer, name, value string) {
+	if value != "" {
+		fmt.Fprintf(out, "%s: ✓ %s\n", name, value)
+	} else {
+		fmt.Fprintf(out, "%s: ✗ not set\n", name)
+	}
+}
+
+func maskSecret(secret string) string {
+	if len(secret) <= 8 {
+		return secret + "..."
+	}
+	return secret[:8] + "..."
 }

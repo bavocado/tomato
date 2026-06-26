@@ -101,10 +101,3 @@ func printResult(result *model.StepResult) {
 		fmt.Fprintf(os.Stderr, "✗ %s failed: %s\n", result.StepName, result.Error)
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

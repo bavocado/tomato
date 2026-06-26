@@ -90,11 +90,3 @@ func getGitRemote(cfg *StepConfig) string {
 	}
 	return strings.TrimSpace(string(out))
 }
-
-func writeFile(path, content string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(content), 0644)
-}

@@ -39,16 +39,55 @@ func NewInitCmd() *cobra.Command {
 			}
 			fmt.Printf("✓ Created .tomato/runs/\n")
 
-			// Warn about auth_token in git-tracked file
+			// Ensure .tomato/ and tomato.yaml are in .gitignore
 			gitignorePath := filepath.Join(dir, ".gitignore")
+			ensureGitignore(gitignorePath, []string{".tomato/", "tomato.yaml"})
+			fmt.Printf("✓ Updated .gitignore (.tomato/ and tomato.yaml)\n")
+
+			// Warn about auth_token in git-tracked file
 			if !isTomatoYamlIgnored(gitignorePath) {
 				fmt.Println("⚠  WARNING: tomato.yaml contains auth_token in plain text.")
-				fmt.Println("   Add 'tomato.yaml' to your .gitignore or use env vars in CI.")
+				fmt.Println("   It is now in .gitignore. Verify before committing.")
 			}
 
 			return nil
 		},
 	}
+}
+
+// ensureGitignore appends entries to .gitignore if they are not already present.
+func ensureGitignore(gitignorePath string, entries []string) {
+	var content string
+	if data, err := os.ReadFile(gitignorePath); err == nil {
+		content = string(data)
+	}
+
+	var toAdd []string
+	for _, entry := range entries {
+		found := false
+		for _, line := range strings.Split(content, "\n") {
+			if strings.TrimSpace(line) == entry {
+				found = true
+				break
+			}
+		}
+		if !found {
+			toAdd = append(toAdd, entry)
+		}
+	}
+
+	if len(toAdd) == 0 {
+		return
+	}
+
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	content += "# tomato\n"
+	for _, entry := range toAdd {
+		content += entry + "\n"
+	}
+	os.WriteFile(gitignorePath, []byte(content), 0644)
 }
 
 func isTomatoYamlIgnored(gitignorePath string) bool {

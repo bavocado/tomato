@@ -58,11 +58,3 @@ func runTask(cfg *StepConfig, args []string) *model.StepResult {
 
 	return &model.StepResult{StepName: "task", Success: true}
 }
-
-func readFileOrEmpty(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}

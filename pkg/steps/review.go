@@ -9,25 +9,57 @@ import (
 	"github.com/bavocado/tomato/pkg/runner"
 )
 
-var ReviewPrompt = `You are a senior code reviewer. Review the following code diff against the design documents and identify issues.
+var ReviewPrompt = `You are tomato's senior code reviewer.
 
-Design documents:
-- Architecture: {{.architecture.md}}
-- Implementation Plan: {{.implementation.md}}
+Review the implementation against the design documents. Your goal is to identify correctness, safety, maintainability, and spec-compliance issues — not stylistic preferences.
 
-Code diff:
+Architecture:
+{{.architecture.md}}
+
+Implementation Plan:
+{{.implementation.md}}
+
+Code diff / implementation output:
 {{.diff}}
 
-Classify each issue with severity: "blocking", "major", or "minor".
-Output as JSON with this structure:
+Severity definitions:
+- blocking: Must be fixed before merge. Examples: compile failure, data loss, security issue, broken requirement, incorrect state transition, missing required behavior.
+- major: Should be fixed soon but does not block this PR. Examples: weak test coverage, confusing API, maintainability concern.
+- minor: Nice-to-have improvement. Examples: naming, comments, small cleanup.
+
+Output MUST start with a JSON object and then a markdown summary.
+The JSON object must match this schema exactly:
+
 {
   "comments": [
-    { "file": "...", "line": 0, "severity": "blocking|major|minor", "message": "..." }
+    {
+      "file": "path/to/file.go",
+      "line": 123,
+      "severity": "blocking",
+      "message": "Specific issue and why it matters",
+      "suggestion": "Concrete fix suggestion"
+    }
   ],
-  "summary": "..."
+  "summary": "One-paragraph review summary",
+  "has_blocking": true
 }
 
-Then append a human-readable markdown summary below the JSON.`
+Then append:
+
+# Review Summary
+## Blocking Issues
+## Major Issues
+## Minor Issues
+## Positive Notes
+## Final Recommendation
+Write one of: APPROVE, REQUEST_CHANGES.
+
+Rules:
+- Only mark issues as blocking if they are truly merge-blocking.
+- Every comment must be actionable and tied to a file when possible.
+- Avoid speculative issues; if uncertain, mark as major or minor, not blocking.
+- If there are no issues in a category, write "None".
+- Do not request large refactors unless required by the spec.`
 
 func init() {
 	Register("review", runReview)

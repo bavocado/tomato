@@ -7,7 +7,9 @@ import (
 	"github.com/bavocado/tomato/pkg/runner"
 )
 
-var ImplPrompt = `You are a software engineer. Implement the code based on the following design documents.
+var ImplPrompt = `You are tomato's implementation engineer.
+
+Implement according to the design documents below. Produce a clear, reviewable implementation plan and code-oriented output that can be applied to the repository.
 
 Architecture:
 {{.architecture.md}}
@@ -18,7 +20,38 @@ UI Specification:
 Implementation Plan:
 {{.implementation.md}}
 
-Output the actual source code files. Include meaningful comments.`
+Output markdown with this exact structure:
+
+# Implementation Output
+
+## 1. Summary
+Briefly describe what is being implemented.
+
+## 2. Files to Change
+For each file, include:
+- Path
+- Create / Modify / Delete
+- Responsibility
+
+## 3. Patch Plan
+For each file, describe the exact change.
+If writing code, include complete code blocks or unified diff-style snippets.
+
+## 4. Commands to Run
+List build/test/lint commands that should verify the change.
+
+## 5. Risk Notes
+List risky areas, compatibility concerns, or places needing human review.
+
+## 6. Post-Implementation Architecture Update
+Summarize how the actual implementation changes or confirms architecture.md.
+
+Rules:
+- Follow the design; do not invent a different architecture.
+- Keep changes minimal and cohesive.
+- Prefer small functions, explicit errors, and testable boundaries.
+- If design conflicts with current repo structure, explain the conflict and choose the least invasive fix.
+- Do not hide uncertainty — mark it clearly under Risk Notes.`
 
 func init() {
 	Register("impl", runImpl)

@@ -6,21 +6,72 @@ import (
 )
 
 func TestSpecPrompt(t *testing.T) {
-	if len(SpecPrompt) == 0 {
-		t.Error("spec prompt should not be empty")
-	}
-	if !contains(SpecPrompt, "PRD") {
-		t.Error("spec prompt should mention PRD")
-	}
+	assertContainsAll(t, SpecPrompt, []string{
+		"PRD",
+		"Functional Requirements",
+		"Acceptance Criteria",
+		"Given/When/Then",
+		"Edge Cases",
+		"Non-Goals",
+	})
+}
+
+func TestDesignPrompt(t *testing.T) {
+	assertContainsAll(t, DesignPrompt, []string{
+		"architecture.md",
+		"ui-spec.md",
+		"implementation.md",
+		"Mermaid",
+		"Error Handling Strategy",
+		"Testing Strategy",
+		"File and Package Plan",
+	})
+}
+
+func TestImplPrompt(t *testing.T) {
+	assertContainsAll(t, ImplPrompt, []string{
+		"Implementation Output",
+		"Files to Change",
+		"Patch Plan",
+		"Commands to Run",
+		"Risk Notes",
+		"Post-Implementation Architecture Update",
+	})
+}
+
+func TestReviewPrompt(t *testing.T) {
+	assertContainsAll(t, ReviewPrompt, []string{
+		"blocking",
+		"major",
+		"minor",
+		"has_blocking",
+		"REQUEST_CHANGES",
+		"APPROVE",
+		"suggestion",
+	})
+}
+
+func TestTestPrompt(t *testing.T) {
+	assertContainsAll(t, TestPrompt, []string{
+		"Test Plan",
+		"Unit Tests",
+		"Integration Tests",
+		"Error and Edge Cases",
+		"Regression Tests",
+		"Commands",
+		"Coverage Gaps",
+	})
 }
 
 func TestStepRegistration(t *testing.T) {
-	fn, err := Get("spec")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fn == nil {
-		t.Error("expected non-nil step function")
+	for _, name := range []string{"spec", "design", "impl", "review", "test"} {
+		fn, err := Get(name)
+		if err != nil {
+			t.Fatalf("expected %s step to be registered: %v", name, err)
+		}
+		if fn == nil {
+			t.Fatalf("expected non-nil step function for %s", name)
+		}
 	}
 }
 
@@ -31,6 +82,14 @@ func TestUnknownStep(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && strings.Contains(s, substr)
+func assertContainsAll(t *testing.T, prompt string, required []string) {
+	t.Helper()
+	if strings.TrimSpace(prompt) == "" {
+		t.Fatal("prompt should not be empty")
+	}
+	for _, substr := range required {
+		if !strings.Contains(prompt, substr) {
+			t.Errorf("prompt should contain %q", substr)
+		}
+	}
 }

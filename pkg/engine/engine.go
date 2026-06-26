@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bavocado/tomato/pkg/archive"
 	"github.com/bavocado/tomato/pkg/budget"
 	"github.com/bavocado/tomato/pkg/config"
 	"github.com/bavocado/tomato/pkg/steps"
@@ -122,6 +123,17 @@ featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
 			return fmt.Errorf("step %q failed: %s", stepCfg.Name, result.Error)
 		}
 		fmt.Printf("✓ %s completed (run: %s)\n", stepCfg.Name, result.RunID)
+
+		// Post-hook: after impl, archive the design trio to v<N>/
+		if stepCfg.Name == "impl" && result.Success {
+			featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
+			ver, err := archive.ArchiveTrio(featureDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "⚠  warning: failed to archive design trio: %v\n", err)
+			} else {
+				fmt.Printf("📦 design trio archived to v%d/\n", ver)
+			}
+		}
 	}
 
 	return nil

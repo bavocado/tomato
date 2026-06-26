@@ -89,11 +89,34 @@ func runReview(cfg *StepConfig, args []string) *model.StepResult {
 	)
 }
 
-// HasBlockingIssues scans a review output file for "blocking" severity.
+// HasBlockingIssues scans a review output file for blocking issues.
+// It checks multiple signals:
+// 1. JSON field "has_blocking": true
+// 2. Any "severity" value containing "blocking" (handles spacing variations)
+// 3. Plain text mention of "blocking" in markdown context
+// Returns false only if none of these signals are found, or explicitly "has_blocking": false.
 func HasBlockingIssues(reviewPath string) bool {
 	data, err := os.ReadFile(reviewPath)
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), `"severity": "blocking"`)
+	content := string(data)
+
+	// Check for explicit has_blocking: false first (takes precedence)
+	if strings.Contains(content, `"has_blocking":false`) || strings.Contains(content, `"has_blocking": false`) {
+		return false
+	}
+
+	// Check for has_blocking: true
+	if strings.Contains(content, `"has_blocking":true`) || strings.Contains(content, `"has_blocking": true`) {
+		return true
+	}
+
+	// Check for severity value containing "blocking" (handles both "severity":"blocking" and "severity": "blocking")
+	// Also catches plain text mentions of "blocking" in markdown
+	if strings.Contains(content, "blocking") {
+		return true
+	}
+
+	return false
 }

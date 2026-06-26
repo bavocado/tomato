@@ -85,14 +85,26 @@ func Execute(
 		}
 	}
 
-	// Write output artifacts
+	// Write output artifacts — support artifact splitting via ---TOMATO-ARTIFACT: filename--- markers
+	artifactParts := splitArtifacts(responseText)
 	for _, outPath := range outputFiles {
-		fullPath := filepath.Join(repoDir, outPath)
+		fullPath := outPath
+		if !filepath.IsAbs(fullPath) {
+			fullPath = filepath.Join(repoDir, outPath)
+		}
 		dir := filepath.Dir(fullPath)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return failure(stepName, runID, start, modelName, err)
 		}
-		if err := os.WriteFile(fullPath, []byte(responseText), 0644); err != nil {
+
+		// Determine content: prefer the named artifact, fall back to full response
+		content := responseText
+		baseName := filepath.Base(outPath)
+		if part, ok := artifactParts[baseName]; ok {
+			content = part
+		}
+
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
 			return failure(stepName, runID, start, modelName, err)
 		}
 	}
@@ -193,4 +205,45 @@ func writeMeta(meta model.RunMeta, repoDir, runID string) {
 	metaPath := filepath.Join(runDir, "meta.json")
 	data, _ := json.MarshalIndent(meta, "", "  ")
 	os.WriteFile(metaPath, data, 0644)
+}
+
+// splitArtifacts parses an LLM response that contains ---TOMATO-ARTIFACT: filename--- markers
+// and returns a map of filename -> content. If no markers are found, returns a single
+// entry with key "" containing the full text (unmodified).
+func splitArtifacts(text string) map[string]string {
+	const markerPrefix = "---TOMATO-ARTIFACT: "
+
+	if !strings.Contains(text, markerPrefix) {
+		return map[string]string{"": text}
+	}
+
+	parts := make(map[string]string)
+	lines := strings.Split(text, "\n")
+
+	var currentName string
+	var currentContent strings.Builder
+
+	flush := func() {
+		if currentName != "" {
+			parts[currentName] = strings.TrimSpace(currentContent.String())
+			currentContent.Reset()
+		}
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, markerPrefix) && strings.HasSuffix(trimmed, "---") {
+			flush()
+			name := strings.TrimSuffix(strings.TrimPrefix(trimmed, markerPrefix), "---")
+			currentName = strings.TrimSpace(name)
+			continue
+		}
+		if currentName != "" {
+			currentContent.WriteString(line)
+			currentContent.WriteString("\n")
+		}
+	}
+	flush()
+
+	return parts
 }

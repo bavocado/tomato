@@ -92,48 +92,108 @@ func NewRunCmd() *cobra.Command {
 }
 
 func NewSpecCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "spec",
 		Short: "Run requirements analysis (generate PRD)",
-		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
-			result := runStepWithName("spec", cfg)
-			printResult(result)
-			if !result.Success {
-				os.Exit(1)
-			}
-			return nil
-		}),
 	}
+	cmd.RunE = withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+		force, _ := cmd.Flags().GetBool("force")
+		if !force && outputsExist(cfg.FeatureDir, "prd.md") {
+			return fmt.Errorf("prd.md already exists. Use --force to overwrite")
+		}
+		result := runStepWithName("spec", cfg)
+		printResult(result)
+		if !result.Success {
+			os.Exit(1)
+		}
+		return nil
+	})
+	addForceFlag(cmd)
+	return cmd
 }
 
 func NewDesignCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "design",
 		Short: "Run design (architecture + UI + implementation)",
-		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
-			result := runStepWithName("design", cfg)
-			printResult(result)
-			if !result.Success {
-				os.Exit(1)
-			}
-			return nil
-		}),
 	}
+	cmd.RunE = withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+		force, _ := cmd.Flags().GetBool("force")
+		if !force && outputsExist(cfg.FeatureDir, "architecture.md", "ui-spec.md", "implementation.md") {
+			return fmt.Errorf("design artifacts already exist. Use --force to overwrite")
+		}
+		result := runStepWithName("design", cfg)
+		printResult(result)
+		if !result.Success {
+			os.Exit(1)
+		}
+		return nil
+	})
+	addForceFlag(cmd)
+	return cmd
 }
 
 func NewImplCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "impl",
 		Short: "Run code implementation",
-		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
-			result := runStepWithName("impl", cfg)
-			printResult(result)
-			if !result.Success {
-				os.Exit(1)
-			}
-			return nil
-		}),
 	}
+	cmd.RunE = withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+		force, _ := cmd.Flags().GetBool("force")
+		if !force && outputsExist(cfg.FeatureDir, "impl-output.md") {
+			return fmt.Errorf("impl-output.md already exists. Use --force to overwrite")
+		}
+		result := runStepWithName("impl", cfg)
+		printResult(result)
+		if !result.Success {
+			os.Exit(1)
+		}
+		return nil
+	})
+	addForceFlag(cmd)
+	return cmd
+}
+
+func NewReviewCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "review",
+		Short: "Single-shot code review (no loop)",
+	}
+	cmd.RunE = withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+		force, _ := cmd.Flags().GetBool("force")
+		if !force && outputsExist(cfg.FeatureDir, "reviews") {
+			return fmt.Errorf("review artifacts already exist. Use --force to overwrite")
+		}
+		result := runStepWithName("review", cfg)
+		printResult(result)
+		if !result.Success {
+			os.Exit(1)
+		}
+		return nil
+	})
+	addForceFlag(cmd)
+	return cmd
+}
+
+func NewTestCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "test",
+		Short: "Generate and run tests",
+	}
+	cmd.RunE = withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+		force, _ := cmd.Flags().GetBool("force")
+		if !force && outputsExist(cfg.FeatureDir, "test-report.md") {
+			return fmt.Errorf("test-report.md already exists. Use --force to overwrite")
+		}
+		result := runStepWithName("test", cfg)
+		printResult(result)
+		if !result.Success {
+			os.Exit(1)
+		}
+		return nil
+	})
+	addForceFlag(cmd)
+	return cmd
 }
 
 func NewPRCmd() *cobra.Command {
@@ -142,36 +202,6 @@ func NewPRCmd() *cobra.Command {
 		Short: "Push branch + open/update PR (draft)",
 		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
 			result := runStepWithName("pr", cfg)
-			printResult(result)
-			if !result.Success {
-				os.Exit(1)
-			}
-			return nil
-		}),
-	}
-}
-
-func NewReviewCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "review",
-		Short: "Single-shot code review (no loop)",
-		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
-			result := runStepWithName("review", cfg)
-			printResult(result)
-			if !result.Success {
-				os.Exit(1)
-			}
-			return nil
-		}),
-	}
-}
-
-func NewTestCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "test",
-		Short: "Generate and run tests",
-		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
-			result := runStepWithName("test", cfg)
 			printResult(result)
 			if !result.Success {
 				os.Exit(1)

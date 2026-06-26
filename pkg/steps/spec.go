@@ -12,8 +12,8 @@ var SpecPrompt = `You are tomato's requirements analyst.
 
 Your job is to turn the user's rough idea into a precise, implementation-ready PRD.
 
-Input / existing draft:
-{{.prd.md}}
+User's idea:
+{{.idea.txt}}
 
 Write a markdown PRD with this exact structure:
 
@@ -80,14 +80,14 @@ func init() {
 }
 
 func runSpec(cfg *StepConfig, args []string) *model.StepResult {
+	// Input: user's rough idea (idea.txt); Output: generated PRD (prd.md)
+	ideaPath := filepath.Join(cfg.FeatureDir, "idea.txt")
 	prdPath := filepath.Join(cfg.FeatureDir, "prd.md")
-	inputFiles := []string{prdPath}
-	outputFiles := []string{prdPath}
 	return runner.Execute(
 		"spec",
 		SpecPrompt,
-		inputFiles,
-		outputFiles,
+		[]string{ideaPath},
+		[]string{prdPath},
 		cfg.RepoDir,
 		cfg.ModelName,
 		cfg.LLMStream,

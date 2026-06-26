@@ -1,6 +1,7 @@
 package steps
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/bavocado/tomato/pkg/model"
@@ -63,7 +64,7 @@ func runImpl(cfg *StepConfig, args []string) *model.StepResult {
 		filepath.Join(cfg.FeatureDir, "ui-spec.md"),
 		filepath.Join(cfg.FeatureDir, "implementation.md"),
 	}
-	return runner.Execute(
+	result := runner.Execute(
 		"impl",
 		ImplPrompt,
 		inputFiles,
@@ -74,4 +75,21 @@ func runImpl(cfg *StepConfig, args []string) *model.StepResult {
 		cfg.PromptVersion,
 		cfg.BudgetTracker,
 	)
+
+	// Post-hook: extract code blocks from impl-output.md and write to actual source files
+	if result.Success {
+		implOutputPath := filepath.Join(cfg.FeatureDir, "impl-output.md")
+		data, err := os.ReadFile(implOutputPath)
+		if err == nil {
+			blocks := extractCodeBlocks(string(data))
+			if len(blocks) > 0 {
+				if err := writeCodeBlocks(cfg.RepoDir, blocks); err != nil {
+					// Non-fatal: log warning but don't fail the step
+					os.WriteFile(filepath.Join(cfg.FeatureDir, "impl-extract-errors.txt"), []byte(err.Error()), 0644)
+				}
+			}
+		}
+	}
+
+	return result
 }

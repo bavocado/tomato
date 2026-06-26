@@ -72,9 +72,20 @@ func runReview(cfg *StepConfig, args []string) *model.StepResult {
 		round = args[0]
 	}
 
+	// Get real git diff and write to a temp file for the prompt template
+	diffText, err := getGitDiff(cfg.RepoDir)
+	if err != nil {
+		diffText = ""
+	}
+
+	diffPath := filepath.Join(cfg.FeatureDir, ".diff.tmp")
+	os.WriteFile(diffPath, []byte(diffText), 0644)
+	defer os.Remove(diffPath)
+
 	inputFiles := []string{
 		filepath.Join(cfg.FeatureDir, "architecture.md"),
 		filepath.Join(cfg.FeatureDir, "implementation.md"),
+		diffPath,
 	}
 	return runner.Execute(
 		"review",

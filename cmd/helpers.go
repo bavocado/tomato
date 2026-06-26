@@ -13,6 +13,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// addForceFlag adds a --force boolean flag to a command.
+func addForceFlag(cmd *cobra.Command) {
+	cmd.Flags().Bool("force", false, "overwrite existing artifacts")
+}
+
+// outputsExist returns true if any of the named files/dirs exist under featureDir.
+func outputsExist(featureDir string, names ...string) bool {
+	for _, name := range names {
+		path := filepath.Join(featureDir, name)
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func withFeatureAndModel(fn func(*steps.StepConfig, []string) error) func(*cobra.Command, []string) error {
 		return func(cmd *cobra.Command, args []string) error {
 			dir, _ := os.Getwd()

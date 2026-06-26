@@ -13,6 +13,7 @@ func TestSpecPrompt(t *testing.T) {
 		"Given/When/Then",
 		"Edge Cases",
 		"Non-Goals",
+		"idea.txt",
 	})
 }
 

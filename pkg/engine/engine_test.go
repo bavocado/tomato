@@ -127,3 +127,78 @@ workflows:
 		t.Errorf("expected fallback to openai/gpt-5, got %s", model)
 	}
 }
+
+func TestEngineBudgetTrackerInitialized(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := config.Default()
+	config.Save(cfg, filepath.Join(dir, "tomato.yaml"))
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if eng.Tracker == nil {
+		t.Fatal("expected budget tracker to be initialized")
+	}
+
+	// Verify budget was loaded from config
+	if eng.Tracker.OnExceed() != "warn" {
+		t.Errorf("expected on_exceed 'warn', got '%s'", eng.Tracker.OnExceed())
+	}
+}
+
+func TestEngineRunFailsOnNonexistentWorkflow(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := config.Default()
+	config.Save(cfg, filepath.Join(dir, "tomato.yaml"))
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = eng.Run("nonexistent-workflow")
+	if err == nil {
+		t.Error("expected error for nonexistent workflow")
+	}
+}
+
+func TestEngineCustomBudgetInConfig(t *testing.T) {
+	dir := t.TempDir()
+
+	yamlContent := `
+budget:
+  mode: quality
+  global_per_run: 999999
+  per_step:
+    spec: 50000
+  on_exceed: fail
+  degrade_to: openai/gpt-5
+
+workflows:
+  default:
+    steps: [spec]
+`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if eng.Config.Budget.Mode != "quality" {
+		t.Errorf("expected budget mode 'quality', got '%s'", eng.Config.Budget.Mode)
+	}
+	if eng.Config.Budget.GlobalPerRun != 999999 {
+		t.Errorf("expected global_per_run 999999, got %d", eng.Config.Budget.GlobalPerRun)
+	}
+	if eng.Config.Budget.OnExceed != "fail" {
+		t.Errorf("expected on_exceed 'fail', got '%s'", eng.Config.Budget.OnExceed)
+	}
+}

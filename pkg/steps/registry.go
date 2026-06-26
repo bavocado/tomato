@@ -5,9 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/bavocado/tomato/pkg/llm"
-	"github.com/bavocado/tomato/pkg/model"
-	"github.com/bavocado/tomato/pkg/runner"
+"github.com/bavocado/tomato/pkg/budget"
+"github.com/bavocado/tomato/pkg/llm"
+"github.com/bavocado/tomato/pkg/model"
+"github.com/bavocado/tomato/pkg/runner"
 )
 
 // StepConfig is the minimal config for running a step.
@@ -19,6 +20,7 @@ type StepConfig struct {
 	APIKey         string
 	PromptVersion  string
 	LLMStream      runner.LLMFunc
+	BudgetTracker  *budget.Tracker
 	// Anthropic-specific connection parameters (from tomato.yaml)
 	AnthropicURL   string
 	AnthropicKey   string

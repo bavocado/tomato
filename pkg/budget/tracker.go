@@ -74,6 +74,28 @@ func (t *Tracker) SetOnExceed(strategy string) {
 	t.onExceed = strategy
 }
 
+// InitFromConfig configures the tracker from a budget config struct.
+func (t *Tracker) InitFromConfig(mode string, perStep map[string]int, global int, onExceed, degradeTo string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.globalBudget = global
+	t.onExceed = onExceed
+	t.degradeToModel = degradeTo
+	for step, budget := range perStep {
+		t.perStepBudget[step] = budget
+	}
+
+	if t.onExceed == "" {
+		t.onExceed = "warn"
+	}
+}
+
+// EstimateTokens returns a rough token estimate (4 chars ≈ 1 token).
+func EstimateTokens(text string) int {
+	return len(text) / 4
+}
+
 // OnExceed returns the on-exceed strategy.
 func (t *Tracker) OnExceed() string {
 	t.mu.Lock()

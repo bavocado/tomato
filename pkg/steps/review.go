@@ -53,6 +53,7 @@ func runReview(cfg *StepConfig, args []string) *model.StepResult {
 		cfg.ModelName,
 		cfg.LLMStream,
 		cfg.PromptVersion,
+		cfg.BudgetTracker,
 	)
 }
 

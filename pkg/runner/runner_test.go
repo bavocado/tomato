@@ -20,20 +20,21 @@ func TestRunStepProducesArtifacts(t *testing.T) {
 		return nil
 	}
 
-	result := Execute(
-		"design",
-		"Design the architecture for: {{.prd.md}}",
-		[]string{filepath.Join("docs", "specs", "my-feature", "prd.md")},
-		[]string{
-			filepath.Join("docs", "specs", "my-feature", "architecture.md"),
-			filepath.Join("docs", "specs", "my-feature", "ui-spec.md"),
-			filepath.Join("docs", "specs", "my-feature", "implementation.md"),
-		},
-		dir,
-		"gpt-5",
-		mockLLM,
-		"v1",
-	)
+result := Execute(
+			"design",
+			"Design the architecture for: {{.prd.md}}",
+			[]string{filepath.Join("docs", "specs", "my-feature", "prd.md")},
+			[]string{
+				filepath.Join("docs", "specs", "my-feature", "architecture.md"),
+				filepath.Join("docs", "specs", "my-feature", "ui-spec.md"),
+				filepath.Join("docs", "specs", "my-feature", "implementation.md"),
+			},
+			dir,
+			"gpt-5",
+			mockLLM,
+			"v1",
+			nil,
+		)
 
 	if !result.Success {
 		t.Fatalf("step failed: %s", result.Error)
@@ -62,16 +63,17 @@ func TestRunStepWithMissingInput(t *testing.T) {
 		return nil
 	}
 
-	result := Execute(
-		"spec",
-		"Write PRD for {{.input.md}}",
-		[]string{filepath.Join(dir, "nonexistent.md")},
-		[]string{filepath.Join(dir, "prd.md")},
-		dir,
-		"gpt-5",
-		mockLLM,
-		"v1",
-	)
+result := Execute(
+			"spec",
+			"Write PRD for {{.input.md}}",
+			[]string{filepath.Join(dir, "nonexistent.md")},
+			[]string{filepath.Join(dir, "prd.md")},
+			dir,
+			"gpt-5",
+			mockLLM,
+			"v1",
+			nil,
+		)
 
 	if !result.Success {
 		t.Fatalf("step should handle missing input: %s", result.Error)
@@ -87,16 +89,17 @@ func TestRunStepTimeAndModel(t *testing.T) {
 		return nil
 	}
 
-	result := Execute(
-		"design",
-		"test",
-		nil,
-		[]string{filepath.Join(dir, "out.md")},
-		dir,
-		"glm/glm-5.2",
-		mockLLM,
-		"v1",
-	)
+result := Execute(
+			"design",
+			"test",
+			nil,
+			[]string{filepath.Join(dir, "out.md")},
+			dir,
+			"glm/glm-5.2",
+			mockLLM,
+			"v1",
+			nil,
+		)
 
 	if !result.Success {
 		t.Fatalf("step failed: %s", result.Error)

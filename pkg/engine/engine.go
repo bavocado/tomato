@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bavocado/tomato/pkg/budget"
 	"github.com/bavocado/tomato/pkg/config"
 	"github.com/bavocado/tomato/pkg/steps"
 )
@@ -17,6 +18,7 @@ type Engine struct {
 	Workflows   map[string]config.WorkflowDef
 	RepoDir     string
 	AdapterBins map[string]string
+	Tracker     *budget.Tracker
 }
 
 // NewEngine creates an engine by loading tomato.yaml from the given directory.
@@ -42,11 +44,21 @@ func NewEngine(dir string) (*Engine, error) {
 		steps.GlobalAdapterBin = envBin
 	}
 
+	tracker := budget.NewTracker()
+	tracker.InitFromConfig(
+		cfg.Budget.Mode,
+		cfg.Budget.PerStep,
+		cfg.Budget.GlobalPerRun,
+		cfg.Budget.OnExceed,
+		cfg.Budget.DegradeTo,
+	)
+
 	return &Engine{
 		Config:      cfg,
 		Workflows:   cfg.Workflows,
 		RepoDir:     dir,
 		AdapterBins: adapterBins,
+		Tracker:     tracker,
 	}, nil
 }
 
@@ -100,6 +112,7 @@ featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
 				AnthropicURL:   e.Config.Anthropic.BaseURL,
 				AnthropicKey:   e.Config.Anthropic.AuthToken,
 				AnthropicModel: e.Config.Anthropic.Model,
+				BudgetTracker:  e.Tracker,
 			}
 			stepConfig.LLMStream = steps.NewLLMStream(stepConfig)
 
@@ -138,6 +151,7 @@ reviewCfg := &steps.StepConfig{
 				AnthropicURL:   e.Config.Anthropic.BaseURL,
 				AnthropicKey:   e.Config.Anthropic.AuthToken,
 				AnthropicModel: e.Config.Anthropic.Model,
+				BudgetTracker:  e.Tracker,
 			}
 			reviewCfg.LLMStream = steps.NewLLMStream(reviewCfg)
 
@@ -164,6 +178,7 @@ implCfg := &steps.StepConfig{
 					AnthropicURL:   e.Config.Anthropic.BaseURL,
 					AnthropicKey:   e.Config.Anthropic.AuthToken,
 					AnthropicModel: e.Config.Anthropic.Model,
+					BudgetTracker:  e.Tracker,
 				}
 				implCfg.LLMStream = steps.NewLLMStream(implCfg)
 			fixResult := implFn(implCfg, nil)

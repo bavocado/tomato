@@ -48,9 +48,9 @@ func withFeatureAndModel(fn func(*steps.StepConfig, []string) error) func(*cobra
 		modelID := resolveModelForStep(stepName, cfg)
 		apiKey := os.Getenv(llm.EnvKeyName(extractProvider(modelID)))
 
-		// Resolve the feature: --feature flag > git branch > current-feature.
+		// Resolve the feature: --feature flag > tomato.yaml > git branch > current-feature.
 		flagFeature, _ := cmd.Flags().GetString("feature")
-		feature := steps.ResolveFeature(flagFeature, dir)
+		feature := steps.ResolveFeature(flagFeature, cfg.Feature, dir)
 
 		// Initialize per-command budget tracker
 		tracker := budget.NewTracker()

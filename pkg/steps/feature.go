@@ -11,10 +11,14 @@ var featureSanitizeRe = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 // ResolveFeature determines the feature name that groups artifacts under
 // docs/specs/<feature>/ (design §2.6). Precedence:
 //  1. an explicit value (e.g. the --feature flag), sanitized
-//  2. the current git branch's last path segment (feature/login → login)
-//  3. "current-feature" (fallback: no flag, detached HEAD, or no repo)
-func ResolveFeature(explicit, repoDir string) string {
+//  2. the configured value (tomato.yaml `feature:`), sanitized
+//  3. the current git branch's last path segment (feature/login → login)
+//  4. "current-feature" (fallback: nothing set, detached HEAD, or no repo)
+func ResolveFeature(explicit, configured, repoDir string) string {
 	if f := sanitizeFeature(explicit); f != "" {
+		return f
+	}
+	if f := sanitizeFeature(configured); f != "" {
 		return f
 	}
 	branch := getCurrentBranch(repoDir)

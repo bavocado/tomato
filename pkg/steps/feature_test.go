@@ -24,22 +24,32 @@ func TestSanitizeFeature(t *testing.T) {
 }
 
 func TestResolveFeatureExplicitWins(t *testing.T) {
-	if got := ResolveFeature("my-feat", "/nonexistent"); got != "my-feat" {
+	// Explicit flag beats configured value and branch.
+	if got := ResolveFeature("my-feat", "cfg-feat", "/nonexistent"); got != "my-feat" {
 		t.Errorf("explicit flag should win, got %q", got)
+	}
+}
+
+func TestResolveFeatureConfiguredBeatsBranch(t *testing.T) {
+	dir := t.TempDir()
+	gitInit(t, dir, "feature/login")
+	// No flag, but tomato.yaml feature set → it wins over the branch.
+	if got := ResolveFeature("", "from-config", dir); got != "from-config" {
+		t.Errorf("configured value should win over branch, got %q", got)
 	}
 }
 
 func TestResolveFeatureFromBranch(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir, "feature/login")
-	if got := ResolveFeature("", dir); got != "login" {
+	if got := ResolveFeature("", "", dir); got != "login" {
 		t.Errorf("expected branch-derived 'login', got %q", got)
 	}
 }
 
 func TestResolveFeatureFallback(t *testing.T) {
-	// Not a git repo → fallback.
-	if got := ResolveFeature("", t.TempDir()); got != "current-feature" {
+	// Not a git repo, no flag, no config → fallback.
+	if got := ResolveFeature("", "", t.TempDir()); got != "current-feature" {
 		t.Errorf("expected fallback 'current-feature', got %q", got)
 	}
 }

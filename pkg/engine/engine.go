@@ -47,7 +47,7 @@ func NewEngine(dir string) (*Engine, error) {
 		Config:    cfg,
 		Workflows: cfg.Workflows,
 		RepoDir:   dir,
-		Feature:   steps.ResolveFeature("", dir),
+		Feature:   steps.ResolveFeature("", cfg.Feature, dir),
 		Adapters:  adapters,
 		Tracker:   tracker,
 	}, nil

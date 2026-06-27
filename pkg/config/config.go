@@ -10,6 +10,7 @@ import (
 
 // Config is the root of tomato.yaml.
 type Config struct {
+	Feature   string                 `yaml:"feature,omitempty"`
 	Models    ModelsConfig           `yaml:"models"`
 	Anthropic AnthropicConfig        `yaml:"anthropic"`
 	Budget    BudgetConfig           `yaml:"budget"`

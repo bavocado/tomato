@@ -117,7 +117,7 @@ func NewRunCmd() *cobra.Command {
 				return err
 			}
 			flagFeature, _ := cmd.Flags().GetString("feature")
-			eng.Feature = steps.ResolveFeature(flagFeature, dir)
+			eng.Feature = steps.ResolveFeature(flagFeature, eng.Config.Feature, dir)
 			workflowName := "default"
 			if len(args) > 0 {
 				workflowName = args[0]

@@ -108,9 +108,15 @@ tomato design
 tomato hotfix
 
 # Target a specific feature directory (docs/specs/<feature>/).
-# Defaults to the current git branch name, then "current-feature".
+# Precedence: --feature flag > tomato.yaml `feature:` > git branch > "current-feature".
 tomato run --feature login
 tomato design --feature login
+```
+
+Or pin the feature in `tomato.yaml` so you don't pass `--feature` each time:
+
+```yaml
+feature: login
 ```
 
 ---

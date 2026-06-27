@@ -53,11 +53,11 @@ data: [DONE]
 
 func TestModelFromConfig(t *testing.T) {
 	config := map[string]string{
-		"default":  "deepseek/deepseek-4pro",
-		"impl":     "glm/glm-5.2",
-		"spec":     "openai/gpt-5",
-		"review":   "glm/glm-5.2",
-		"test":     "deepseek/deepseek-4pro",
+		"default": "deepseek/deepseek-4pro",
+		"impl":    "glm/glm-5.2",
+		"spec":    "openai/gpt-5",
+		"review":  "glm/glm-5.2",
+		"test":    "deepseek/deepseek-4pro",
 	}
 	stepName := "impl"
 	expected := "glm/glm-5.2"
@@ -85,10 +85,10 @@ func TestNewProvider(t *testing.T) {
 		{"invalid", true},
 	}
 
-for _, tt := range tests {
-			p, err := NewProvider(ProviderConfig{
-				ModelID: tt.modelID,
-			})
+	for _, tt := range tests {
+		p, err := NewProvider(ProviderConfig{
+			ModelID: tt.modelID,
+		})
 		if tt.wantErr {
 			if err == nil {
 				t.Errorf("expected error for %s", tt.modelID)

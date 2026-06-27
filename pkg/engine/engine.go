@@ -104,18 +104,18 @@ func (e *Engine) Run(workflowName string) error {
 			return fmt.Errorf("step %d (%s): %w", i, stepCfg.Name, err)
 		}
 
-featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
-			stepConfig := &steps.StepConfig{
-				RepoDir:        e.RepoDir,
-				FeatureDir:     featureDir,
-				Feature:        "current-feature",
-				ModelName:      e.resolveModel(stepCfg.Name),
-				AnthropicURL:   e.Config.Anthropic.BaseURL,
-				AnthropicKey:   e.Config.Anthropic.AuthToken,
-				AnthropicModel: e.Config.Anthropic.Model,
-				BudgetTracker:  e.Tracker,
-			}
-			stepConfig.LLMStream = steps.NewLLMStream(stepConfig)
+		featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
+		stepConfig := &steps.StepConfig{
+			RepoDir:        e.RepoDir,
+			FeatureDir:     featureDir,
+			Feature:        "current-feature",
+			ModelName:      e.resolveModel(stepCfg.Name),
+			AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
+			AnthropicKey:   e.Config.Anthropic.ResolvedAuthToken(),
+			AnthropicModel: e.Config.Anthropic.ResolvedModel(),
+			BudgetTracker:  e.Tracker,
+		}
+		stepConfig.LLMStream = steps.NewLLMStream(stepConfig)
 
 		result := stepFn(stepConfig, nil)
 		if !result.Success {
@@ -124,7 +124,11 @@ featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
 		}
 		fmt.Printf("✓ %s completed (run: %s)\n", stepCfg.Name, result.RunID)
 
-		// Post-hook: after impl, archive the design trio to v<N>/
+		// Post-hook: after impl, archive the design trio to v<N>/ and rewrite
+		// architecture.md to reflect the real, as-implemented architecture
+		// (design §2.8). Archiving copies (root retains the trio) so the
+		// rewrite overwrites only architecture.md, leaving the design-intent
+		// snapshot frozen in v<N>/.
 		if stepCfg.Name == "impl" && result.Success {
 			featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
 			ver, err := archive.ArchiveTrio(featureDir)
@@ -132,6 +136,13 @@ featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
 				fmt.Fprintf(os.Stderr, "⚠  warning: failed to archive design trio: %v\n", err)
 			} else {
 				fmt.Printf("📦 design trio archived to v%d/\n", ver)
+			}
+			if e.Config.Impl.RewriteArchEnabled() {
+				if err := e.rewriteArchitecture(featureDir); err != nil {
+					fmt.Fprintf(os.Stderr, "⚠  warning: failed to rewrite architecture.md: %v\n", err)
+				} else {
+					fmt.Printf("🔄 architecture.md rewritten to reflect real implementation\n")
+				}
 			}
 		}
 	}
@@ -155,17 +166,17 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 	for round := 1; round <= maxRounds+1; round++ {
 		featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
 
-reviewCfg := &steps.StepConfig{
-				RepoDir:        e.RepoDir,
-				FeatureDir:     featureDir,
-				Feature:        "current-feature",
-				ModelName:      e.resolveModel("review"),
-				AnthropicURL:   e.Config.Anthropic.BaseURL,
-				AnthropicKey:   e.Config.Anthropic.AuthToken,
-				AnthropicModel: e.Config.Anthropic.Model,
-				BudgetTracker:  e.Tracker,
-			}
-			reviewCfg.LLMStream = steps.NewLLMStream(reviewCfg)
+		reviewCfg := &steps.StepConfig{
+			RepoDir:        e.RepoDir,
+			FeatureDir:     featureDir,
+			Feature:        "current-feature",
+			ModelName:      e.resolveModel("review"),
+			AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
+			AnthropicKey:   e.Config.Anthropic.ResolvedAuthToken(),
+			AnthropicModel: e.Config.Anthropic.ResolvedModel(),
+			BudgetTracker:  e.Tracker,
+		}
+		reviewCfg.LLMStream = steps.NewLLMStream(reviewCfg)
 
 		fmt.Printf("  review round %d...\n", round)
 		result := reviewFn(reviewCfg, []string{fmt.Sprintf("r%d", round)})
@@ -182,17 +193,17 @@ reviewCfg := &steps.StepConfig{
 
 		if round <= maxRounds {
 			fmt.Printf("  → round %d found blocking issues, fixing...\n", round)
-implCfg := &steps.StepConfig{
-					RepoDir:        e.RepoDir,
-					FeatureDir:     featureDir,
-					Feature:        "current-feature",
-					ModelName:      e.resolveModel("impl"),
-					AnthropicURL:   e.Config.Anthropic.BaseURL,
-					AnthropicKey:   e.Config.Anthropic.AuthToken,
-					AnthropicModel: e.Config.Anthropic.Model,
-					BudgetTracker:  e.Tracker,
-				}
-				implCfg.LLMStream = steps.NewLLMStream(implCfg)
+			implCfg := &steps.StepConfig{
+				RepoDir:        e.RepoDir,
+				FeatureDir:     featureDir,
+				Feature:        "current-feature",
+				ModelName:      e.resolveModel("impl"),
+				AnthropicURL:   e.Config.Anthropic.BaseURL,
+				AnthropicKey:   e.Config.Anthropic.AuthToken,
+				AnthropicModel: e.Config.Anthropic.Model,
+				BudgetTracker:  e.Tracker,
+			}
+			implCfg.LLMStream = steps.NewLLMStream(implCfg)
 			fixResult := implFn(implCfg, nil)
 			if !fixResult.Success {
 				return fmt.Errorf("fix round %d failed: %s", round, fixResult.Error)
@@ -208,13 +219,7 @@ implCfg := &steps.StepConfig{
 			case "continue":
 				return nil
 			case "ask":
-				fmt.Println("  Accept and continue? [Y/n]")
-				var input string
-				fmt.Scanln(&input)
-				if input == "n" || input == "N" {
-					return fmt.Errorf("review_loop aborted by user")
-				}
-				return nil
+				return e.askOnFail(os.Stdin)
 			case "stop":
 				fallthrough
 			default:
@@ -230,6 +235,58 @@ func (e *Engine) resolveModel(stepName string) string {
 		return m
 	}
 	return e.Config.Models.Default
+}
+
+// askOnFail implements the on_fail: ask policy. It prompts on an interactive
+// terminal, returning nil to accept-and-continue or an error to abort. When the
+// input is not a terminal (CI, piped, /dev/null), it does NOT block waiting on
+// stdin — it fails safe by aborting with a clear message, since "ask" means a
+// human decision is required and none is available.
+func (e *Engine) askOnFail(in *os.File) error {
+	if !isInteractive(in) {
+		return fmt.Errorf("review_loop exhausted: blocking issues remain and on_fail=ask requires an interactive terminal (none detected); rerun interactively or set on_fail to stop/continue")
+	}
+
+	fmt.Println("  Accept and continue? [Y/n]")
+	var input string
+	fmt.Fscanln(in, &input)
+	if input == "n" || input == "N" {
+		return fmt.Errorf("review_loop aborted by user")
+	}
+	return nil
+}
+
+// isInteractive reports whether f is a character device (a terminal), as
+// opposed to a pipe, regular file, or /dev/null.
+func isInteractive(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// rewriteArchitecture runs the §2.8 post-impl architecture rewrite, regenerating
+// the root architecture.md from the actual implementation. Failures are
+// non-fatal (the impl step itself already succeeded) and are surfaced as warnings.
+func (e *Engine) rewriteArchitecture(featureDir string) error {
+	cfg := &steps.StepConfig{
+		RepoDir:        e.RepoDir,
+		FeatureDir:     featureDir,
+		Feature:        "current-feature",
+		ModelName:      e.resolveModel("design"),
+		AnthropicURL:   e.Config.Anthropic.BaseURL,
+		AnthropicKey:   e.Config.Anthropic.AuthToken,
+		AnthropicModel: e.Config.Anthropic.Model,
+		BudgetTracker:  e.Tracker,
+	}
+	cfg.LLMStream = steps.NewLLMStream(cfg)
+
+	result := steps.RewriteArchitecture(cfg)
+	if !result.Success {
+		return fmt.Errorf("%s", result.Error)
+	}
+	return nil
 }
 
 func (e *Engine) callAdapterCfg(role, subcommand, stdinJSON string) string {

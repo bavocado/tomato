@@ -93,3 +93,62 @@ func TestHasBlockingIssuesMissingFile(t *testing.T) {
 		t.Error("expected false for missing file")
 	}
 }
+
+// TestHasBlockingIssuesRealisticOutput mirrors the actual review step output:
+// a JSON object followed by a markdown summary that ALWAYS contains a
+// "## Blocking Issues" header (even when empty). The old substring matcher
+// returned true for this header unconditionally, so review_loop could never
+// converge. The parser must trust the JSON has_blocking field instead.
+func TestHasBlockingIssuesRealisticOutput(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review.md")
+	content := `{"comments":[{"severity":"minor","message":"rename"}],"summary":"looks fine","has_blocking":false}
+
+# Review Summary
+## Blocking Issues
+None
+## Major Issues
+None
+## Minor Issues
+- rename a variable
+## Positive Notes
+Clean code.
+## Final Recommendation
+APPROVE
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	if HasBlockingIssues(path) {
+		t.Error("expected no blocking: has_blocking is false despite the 'Blocking Issues' header")
+	}
+}
+
+// TestHasBlockingIssuesRealisticBlocking verifies a realistic blocking case
+// (JSON with has_blocking:true + markdown) is detected.
+func TestHasBlockingIssuesRealisticBlocking(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review.md")
+	content := `{"comments":[{"severity":"blocking","message":"nil deref"}],"summary":"blocking found","has_blocking":true}
+
+# Review Summary
+## Blocking Issues
+- nil deref in main.go
+`
+	os.WriteFile(path, []byte(content), 0644)
+
+	if !HasBlockingIssues(path) {
+		t.Error("expected blocking when has_blocking is true")
+	}
+}
+
+// TestHasBlockingIssuesUnparseableDefaultsFalse ensures a malformed review
+// output does not loop review_loop forever — it defaults to no-blocking.
+func TestHasBlockingIssuesUnparseableDefaultsFalse(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review.md")
+	os.WriteFile(path, []byte("totally unstructured prose with no JSON at all"), 0644)
+
+	if HasBlockingIssues(path) {
+		t.Error("expected false for unparseable review output (avoid infinite loop)")
+	}
+}

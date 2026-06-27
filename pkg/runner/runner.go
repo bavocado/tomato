@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/bavocado/tomato/pkg/budget"
@@ -54,11 +53,15 @@ func Execute(
 
 	if tracker != nil {
 		estimatedIn := budget.EstimateTokens(promptText)
-		if !tracker.Check(stepName, estimatedIn) {
-			return budgetExceeded(stepName, runID, start, modelName, stepName, estimatedIn, tracker)
-		}
-		if !tracker.CheckGlobal(estimatedIn) {
+		// Global check first. Only "fail" aborts; "warn" (the design default)
+		// and "degrade" proceed (design §2.9.4). The old code hard-failed on
+		// every policy, which reversed "warn" — the documented default is
+		// "warn but continue".
+		if !tracker.CheckGlobal(estimatedIn) && !budgetShouldProceed(tracker, "global", estimatedIn) {
 			return budgetExceeded(stepName, runID, start, modelName, "global", estimatedIn, tracker)
+		}
+		if !tracker.Check(stepName, estimatedIn) && !budgetShouldProceed(tracker, stepName, estimatedIn) {
+			return budgetExceeded(stepName, runID, start, modelName, stepName, estimatedIn, tracker)
 		}
 	}
 
@@ -87,6 +90,13 @@ func Execute(
 
 	// Write output artifacts — support artifact splitting via ---TOMATO-ARTIFACT: filename--- markers
 	artifactParts := splitArtifacts(responseText)
+	// If the response carried no artifact markers but the step expects multiple
+	// outputs, the fallback writes the ENTIRE response to every output file —
+	// silent data corruption (e.g. design's three docs would all be identical).
+	// Surface it so the user knows the model ignored the split instructions.
+	if _, unsplit := artifactParts[""]; unsplit && len(outputFiles) > 1 {
+		fmt.Fprintf(os.Stderr, "⚠  response had no ---TOMATO-ARTIFACT--- markers; writing the full response to all %d output files (expected separate artifacts)\n", len(outputFiles))
+	}
 	for _, outPath := range outputFiles {
 		fullPath := outPath
 		if !filepath.IsAbs(fullPath) {
@@ -138,6 +148,26 @@ func Execute(
 	}
 }
 
+// budgetShouldProceed is consulted when a pre-call budget check would be
+// exceeded. It honors the on_exceed policy (design §2.9.4):
+//   - "fail": report and return false so the caller aborts the step.
+//   - "warn" (default): report a warning and return true (proceed).
+//   - "degrade": report a warning and return true (proceed). Automatic
+//     model downgrade is a v1.x capability (§2.9.7); v1 does not abort.
+func budgetShouldProceed(t *budget.Tracker, scope string, estimated int) bool {
+	switch t.OnExceed() {
+	case "fail":
+		fmt.Fprintf(os.Stderr, "✗ %s token budget exceeded (estimated %d tokens, on_exceed: fail) — aborting step\n", scope, estimated)
+		return false
+	case "degrade":
+		fmt.Fprintf(os.Stderr, "⚠  %s token budget exceeded (estimated %d tokens, on_exceed: degrade) — proceeding; auto-downgrade is v1.x\n", scope, estimated)
+		return true
+	default: // "warn" and any unrecognized value
+		fmt.Fprintf(os.Stderr, "⚠  %s token budget exceeded (estimated %d tokens, on_exceed: warn) — proceeding\n", scope, estimated)
+		return true
+	}
+}
+
 func budgetExceeded(stepName, runID string, start time.Time, modelName, scope string, estimated int, t *budget.Tracker) *model.StepResult {
 	duration := time.Since(start)
 	errMsg := fmt.Sprintf("%s token budget exceeded (estimated: %d tokens, on_exceed: %s)", scope, estimated, t.OnExceed())
@@ -158,30 +188,44 @@ func budgetExceeded(stepName, runID string, start time.Time, modelName, scope st
 }
 
 func buildMessages(promptTemplate string, inputFiles []string, repoDir string) ([]Message, error) {
+	// Read each input file, keyed by its base name. The base name is the
+	// token used in the prompt template (e.g. {{.prd.md}}).
+	//
+	// We substitute tokens manually rather than via text/template: Go's
+	// template engine parses {{.prd.md}} as a field chain (field "prd" then
+	// field "md"), which never matches a map key like "prd.md" — it silently
+	// renders <no value>. Manual replacement keeps the readable {{.file}}
+	// syntax in prompts and actually injects the content.
 	context := make(map[string]string)
 	for _, inPath := range inputFiles {
-		fullPath := filepath.Join(repoDir, inPath)
+		fullPath := inPath
+		// Input paths may be absolute (cfg.FeatureDir is joined against the
+		// repo root) or relative. Only join relative paths; joining an
+		// absolute path would produce a bogus doubled path.
+		if !filepath.IsAbs(fullPath) {
+			fullPath = filepath.Join(repoDir, inPath)
+		}
 		data, err := os.ReadFile(fullPath)
 		if err != nil {
-			// File may not exist yet (first run of spec step)
-			context[inPath] = ""
+			// File may not exist yet (e.g. first run of the spec step) —
+			// substitute an empty value so the token still resolves.
+			context[filepath.Base(inPath)] = ""
 			continue
 		}
 		context[filepath.Base(inPath)] = string(data)
 	}
 
-	tmpl, err := template.New("prompt").Parse(promptTemplate)
-	if err != nil {
-		return nil, fmt.Errorf("parsing prompt template: %w", err)
-	}
-	var promptBuf strings.Builder
-	if err := tmpl.Execute(&promptBuf, context); err != nil {
-		return nil, fmt.Errorf("rendering prompt template: %w", err)
+	// Substitute {{.basename}} tokens with the corresponding file contents.
+	// Tokens without a matching input file are left intact so the gap is
+	// visible in the prompt rather than silently empty.
+	prompt := promptTemplate
+	for key, val := range context {
+		prompt = strings.ReplaceAll(prompt, "{{."+key+"}}", val)
 	}
 
 	return []Message{
 		{Role: "system", Content: "You are tomato, an AI software development assistant. Output in markdown."},
-		{Role: "user", Content: promptBuf.String()},
+		{Role: "user", Content: prompt},
 	}, nil
 }
 

@@ -30,44 +30,44 @@ func outputsExist(featureDir string, names ...string) bool {
 }
 
 func withFeatureAndModel(fn func(*steps.StepConfig, []string) error) func(*cobra.Command, []string) error {
-		return func(cmd *cobra.Command, args []string) error {
-			dir, _ := os.Getwd()
-			cfg, err := config.Load(dir)
-			if err != nil {
-				return fmt.Errorf("loading config: %w\nRun `tomato init` first", err)
-			}
-
-			stepName := cmd.Use
-			modelID := resolveModelForStep(stepName, cfg)
-			apiKey := os.Getenv(llm.EnvKeyName(extractProvider(modelID)))
-
-			// Initialize per-command budget tracker
-			tracker := budget.NewTracker()
-			tracker.InitFromConfig(
-				cfg.Budget.Mode,
-				cfg.Budget.PerStep,
-				cfg.Budget.GlobalPerRun,
-				cfg.Budget.OnExceed,
-				cfg.Budget.DegradeTo,
-			)
-
-			featureDir := filepath.Join(dir, "docs", "specs", "current-feature")
-			stepCfg := &steps.StepConfig{
-				RepoDir:        dir,
-				FeatureDir:     featureDir,
-				Feature:        "current-feature",
-				ModelName:      modelID,
-				APIKey:         apiKey,
-				AnthropicURL:   cfg.Anthropic.BaseURL,
-				AnthropicKey:   cfg.Anthropic.AuthToken,
-				AnthropicModel: cfg.Anthropic.Model,
-				BudgetTracker:  tracker,
-			}
-			stepCfg.LLMStream = steps.NewLLMStream(stepCfg)
-
-			return fn(stepCfg, args)
+	return func(cmd *cobra.Command, args []string) error {
+		dir, _ := os.Getwd()
+		cfg, err := config.Load(dir)
+		if err != nil {
+			return fmt.Errorf("loading config: %w\nRun `tomato init` first", err)
 		}
+
+		stepName := cmd.Use
+		modelID := resolveModelForStep(stepName, cfg)
+		apiKey := os.Getenv(llm.EnvKeyName(extractProvider(modelID)))
+
+		// Initialize per-command budget tracker
+		tracker := budget.NewTracker()
+		tracker.InitFromConfig(
+			cfg.Budget.Mode,
+			cfg.Budget.PerStep,
+			cfg.Budget.GlobalPerRun,
+			cfg.Budget.OnExceed,
+			cfg.Budget.DegradeTo,
+		)
+
+		featureDir := filepath.Join(dir, "docs", "specs", "current-feature")
+		stepCfg := &steps.StepConfig{
+			RepoDir:        dir,
+			FeatureDir:     featureDir,
+			Feature:        "current-feature",
+			ModelName:      modelID,
+			APIKey:         apiKey,
+			AnthropicURL:   cfg.Anthropic.ResolvedBaseURL(),
+			AnthropicKey:   cfg.Anthropic.ResolvedAuthToken(),
+			AnthropicModel: cfg.Anthropic.ResolvedModel(),
+			BudgetTracker:  tracker,
+		}
+		stepCfg.LLMStream = steps.NewLLMStream(stepCfg)
+
+		return fn(stepCfg, args)
 	}
+}
 
 func resolveModelForStep(stepName string, cfg *config.Config) string {
 	if m, ok := cfg.Models.Steps[stepName]; ok {

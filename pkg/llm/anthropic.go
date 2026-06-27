@@ -11,15 +11,17 @@ import (
 
 // ClaudeCLIProvider runs the `claude` CLI tool to execute AI tasks.
 // It forks the `claude` binary with:
-//   --print --permission-mode auto --effort high
+//
+//	--print --permission-mode auto --effort high
+//
 // The prompt is passed via stdin.
 // ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL are set
 // as environment variables from the yaml config (can be overridden by env).
 type ClaudeCLIProvider struct {
-	ModelName    string
-	BaseURL      string
-	AuthToken    string
-	ClaudeModel  string
+	ModelName   string
+	BaseURL     string
+	AuthToken   string
+	ClaudeModel string
 }
 
 func (p *ClaudeCLIProvider) Model() string {

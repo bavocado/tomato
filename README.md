@@ -79,13 +79,13 @@ Edit `tomato.yaml` with your API keys:
 
 ```yaml
 models:
-  default: openai/gpt-5
+  default: glm/glm-5.2
   steps:
-    spec:   anthropic/claude-sonnet-4-20250514
-    design: anthropic/claude-sonnet-4-20250514
-    impl:   anthropic/claude-sonnet-4-20250514
-    review: anthropic/claude-sonnet-4-20250514
-    test:   openai/gpt-5
+    spec:   glm/glm-5.2
+    design: glm/glm-5.2
+    impl:   deepseek/deepseek-v4-pro
+    review: glm/glm-5.2
+    test:   glm/glm-5.2
 
 anthropic:
   base_url: https://api.anthropic.com
@@ -117,13 +117,13 @@ tomato hotfix
 ```yaml
 # ── Model Routing ──────────────────────────────────
 models:
-  default: openai/gpt-5              # fallback when a step has no specific model
+  default: glm/glm-5.2              # fallback when a step has no specific model
   steps:
-    spec:   anthropic/claude-sonnet-4
-    design: anthropic/claude-sonnet-4
-    impl:   anthropic/claude-sonnet-4
-    review: anthropic/claude-sonnet-4
-    test:   openai/gpt-5
+    spec:   glm/glm-5.2
+    design: glm/glm-5.2
+    impl:   deepseek/deepseek-v4-pro
+    review: glm/glm-5.2
+    test:   glm/glm-5.2
 
 # ── Anthropic (Claude CLI) ───────────────────────────
 anthropic:

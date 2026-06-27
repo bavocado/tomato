@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/bavocado/tomato/pkg/config"
 )
@@ -165,6 +166,40 @@ func TestEngineRunFailsOnNonexistentWorkflow(t *testing.T) {
 	err = eng.Run("nonexistent-workflow")
 	if err == nil {
 		t.Error("expected error for nonexistent workflow")
+	}
+}
+
+// TestAskOnFailNonInteractiveAborts verifies that on_fail=ask does NOT block on
+// stdin in a non-interactive context (e.g. CI) — it aborts with a clear error
+// instead of hanging or silently accepting.
+func TestAskOnFailNonInteractiveAborts(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	config.Save(cfg, filepath.Join(dir, "tomato.yaml"))
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A regular file is not a character device, so it models non-interactive
+	// input. The call must return promptly with an error, never block.
+	f, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	done := make(chan error, 1)
+	go func() { done <- eng.askOnFail(f) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("expected error in non-interactive ask mode, got nil (would silently accept)")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("askOnFail blocked on non-interactive stdin (should fail fast)")
 	}
 }
 

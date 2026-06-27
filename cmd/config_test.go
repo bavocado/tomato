@@ -14,6 +14,11 @@ func TestConfigCommandShowsAnthropicYamlStatus(t *testing.T) {
 	os.Chdir(tempDir)
 	defer os.Chdir(origWd)
 
+	// Isolate from ambient ANTHROPIC_* env so the yaml values are what render.
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+	t.Setenv("ANTHROPIC_MODEL", "")
+
 	yaml := `
 models:
   default: openai/gpt-5
@@ -45,8 +50,8 @@ anthropic:
 	if !strings.Contains(out, "base_url: ✓ https://api.anthropic.com") {
 		t.Errorf("expected configured base_url, got:\n%s", out)
 	}
-	if !strings.Contains(out, "auth_token: ✓ configured (sk-ant-a...)") {
-		t.Errorf("expected masked auth_token, got:\n%s", out)
+	if !strings.Contains(out, "auth_token: ✓ configured (sk-ant-a..., from yaml)") {
+		t.Errorf("expected masked auth_token from yaml, got:\n%s", out)
 	}
 	if strings.Contains(out, "sk-ant-abcdef123456") {
 		t.Errorf("full token leaked in output:\n%s", out)
@@ -61,6 +66,11 @@ func TestConfigCommandShowsMissingAnthropicYamlStatus(t *testing.T) {
 	origWd, _ := os.Getwd()
 	os.Chdir(tempDir)
 	defer os.Chdir(origWd)
+
+	// Isolate from ambient ANTHROPIC_* env.
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+	t.Setenv("ANTHROPIC_MODEL", "")
 
 	yaml := `
 models:

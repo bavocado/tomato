@@ -1,6 +1,8 @@
 package steps
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,13 +74,17 @@ func runReview(cfg *StepConfig, args []string) *model.StepResult {
 		round = args[0]
 	}
 
-	// Get real git diff and write to a temp file for the prompt template
+	// Get real git diff and write to a temp file for the prompt template.
+	// The file's base name must be "diff" so it matches the {{.diff}} token
+	// in the prompt (token substitution keys by base name). It lives under
+	// .tomato/ (not git-tracked) so it never leaks into the repo.
 	diffText, err := getGitDiff(cfg.RepoDir)
 	if err != nil {
 		diffText = ""
 	}
 
-	diffPath := filepath.Join(cfg.FeatureDir, ".diff.tmp")
+	diffPath := filepath.Join(cfg.RepoDir, ".tomato", "diff")
+	os.MkdirAll(filepath.Dir(diffPath), 0755)
 	os.WriteFile(diffPath, []byte(diffText), 0644)
 	defer os.Remove(diffPath)
 
@@ -100,34 +106,66 @@ func runReview(cfg *StepConfig, args []string) *model.StepResult {
 	)
 }
 
-// HasBlockingIssues scans a review output file for blocking issues.
-// It checks multiple signals:
-// 1. JSON field "has_blocking": true
-// 2. Any "severity" value containing "blocking" (handles spacing variations)
-// 3. Plain text mention of "blocking" in markdown context
-// Returns false only if none of these signals are found, or explicitly "has_blocking": false.
+// HasBlockingIssues reports whether a review output contains blocking issues.
+//
+// The review step emits a JSON object followed by a markdown summary. The JSON
+// object's "has_blocking" field is the authoritative signal; we parse it
+// rather than substring-matching the word "blocking", because the markdown
+// summary always contains a "## Blocking Issues" section header (even when
+// empty) — bare substring matching would therefore always return true and the
+// review_loop could never converge.
+//
+// If the JSON object is absent or unparseable, we fall back to an explicit
+// "has_blocking: true|false" text marker. If no signal can be found at all we
+// return false (and warn) so a malformed review does not loop forever; the raw
+// file remains on disk for manual inspection.
 func HasBlockingIssues(reviewPath string) bool {
 	data, err := os.ReadFile(reviewPath)
 	if err != nil {
 		return false
 	}
-	content := string(data)
-
-	// Check for explicit has_blocking: false first (takes precedence)
-	if strings.Contains(content, `"has_blocking":false`) || strings.Contains(content, `"has_blocking": false`) {
+	has, ok := parseHasBlocking(string(data))
+	if !ok {
+		fmt.Fprintf(os.Stderr, "⚠  review output %q has no parseable blocking signal; assuming no blocking issues\n", reviewPath)
 		return false
 	}
+	return has
+}
 
-	// Check for has_blocking: true
-	if strings.Contains(content, `"has_blocking":true`) || strings.Contains(content, `"has_blocking": true`) {
-		return true
+// parseHasBlocking extracts the blocking signal from review output.
+// Returns (value, true) when a signal is found, or (false, false) when none.
+func parseHasBlocking(content string) (bool, bool) {
+	// 1. Parse the leading JSON object, if present.
+	if idx := strings.Index(content, "{"); idx >= 0 {
+		dec := json.NewDecoder(strings.NewReader(content[idx:]))
+		var v struct {
+			HasBlocking *bool `json:"has_blocking"`
+			Comments    []struct {
+				Severity string `json:"severity"`
+			} `json:"comments"`
+		}
+		if err := dec.Decode(&v); err == nil {
+			if v.HasBlocking != nil {
+				return *v.HasBlocking, true
+			}
+			// No explicit field: derive from comment severities.
+			for _, c := range v.Comments {
+				if strings.EqualFold(strings.TrimSpace(c.Severity), "blocking") {
+					return true, true
+				}
+			}
+			return false, true
+		}
 	}
 
-	// Check for severity value containing "blocking" (handles both "severity":"blocking" and "severity": "blocking")
-	// Also catches plain text mentions of "blocking" in markdown
-	if strings.Contains(content, "blocking") {
-		return true
+	// 2. Fallback: scan for an explicit has_blocking marker in plain text.
+	// Normalize whitespace so spacing variants collapse to one form.
+	compact := strings.Join(strings.Fields(content), " ")
+	switch {
+	case strings.Contains(compact, "has_blocking: true"), strings.Contains(compact, `"has_blocking": true`):
+		return true, true
+	case strings.Contains(compact, "has_blocking: false"), strings.Contains(compact, `"has_blocking": false`):
+		return false, true
 	}
-
-	return false
+	return false, false
 }

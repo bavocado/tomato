@@ -17,11 +17,11 @@ func TestListRuns(t *testing.T) {
 	os.MkdirAll(runsDir, 0755)
 
 	meta := model.RunMeta{
-		RunID:    "2026-06-24-test123",
-		StepName: "design",
-		Success:  true,
+		RunID:     "2026-06-24-test123",
+		StepName:  "design",
+		Success:   true,
 		ModelUsed: "gpt-5",
-		TokensIn: 100,
+		TokensIn:  100,
 		TokensOut: 50,
 	}
 	data, _ := json.Marshal(meta)
@@ -59,12 +59,12 @@ func TestShowRun(t *testing.T) {
 	os.MkdirAll(runsDir, 0755)
 
 	meta := model.RunMeta{
-		RunID:    "run-abc",
-		StepName: "spec",
-		Success:  true,
-		ModelUsed: "gpt-5",
-		TokensIn:  100,
-		TokensOut: 200,
+		RunID:      "run-abc",
+		StepName:   "spec",
+		Success:    true,
+		ModelUsed:  "gpt-5",
+		TokensIn:   100,
+		TokensOut:  200,
 		DurationMs: 1500,
 	}
 	data, _ := json.Marshal(meta)

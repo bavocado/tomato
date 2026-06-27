@@ -3,11 +3,11 @@ package steps
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/bavocado/tomato/pkg/adapter"
 	"github.com/bavocado/tomato/pkg/model"
 )
 
@@ -22,11 +22,11 @@ func runPR(cfg *StepConfig, args []string) *model.StepResult {
 		return &model.StepResult{Success: false, Error: "not on a git branch; commit changes first"}
 	}
 
-	adapterBin := GlobalAdapterBin
-	if adapterBin == "" {
+	br := cfg.Adapters.For("pr")
+	if br == nil {
 		return &model.StepResult{
 			Success: false,
-			Error:   "no adapter configured for 'pr' role. Set TOMATO_ADAPTER_BIN env or configure in tomato.yaml",
+			Error:   "no adapter configured for 'pr' role. Configure adapters+roles in tomato.yaml or set TOMATO_ADAPTER_BIN",
 		}
 	}
 
@@ -43,29 +43,26 @@ func runPR(cfg *StepConfig, args []string) *model.StepResult {
 	}
 	inputJSON, _ := json.Marshal(input)
 
-	cmd := exec.Command(adapterBin, "create-pr")
-	cmd.Dir = cfg.RepoDir
-	cmd.Env = os.Environ()
-	cmd.Stdin = strings.NewReader(string(inputJSON))
-
-	output, err := cmd.Output()
+	output, err := br.Execute(adapter.CmdCreatePR, string(inputJSON), nil)
 	if err != nil {
 		return &model.StepResult{Success: false, Error: fmt.Sprintf("adapter create-pr failed: %v", err)}
 	}
 
-	// Write pr.md with PR info
 	var result struct {
 		PRRef string `json:"pr_ref"`
 		URL   string `json:"url"`
 	}
-	if err := json.Unmarshal(output, &result); err != nil {
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
 		return &model.StepResult{Success: false, Error: fmt.Sprintf("invalid adapter output: %v", err)}
 	}
 
+	// Human-readable pr.md plus machine-readable pr.json for downstream steps.
 	prContent := fmt.Sprintf("# PR: %s\n\n- PR: %s\n- URL: %s\n- Branch: %s\n", cfg.Feature, result.PRRef, result.URL, branch)
-	prPath := filepath.Join(cfg.FeatureDir, "pr.md")
-	if err := writeFile(prPath, prContent); err != nil {
+	if err := writeFile(filepath.Join(cfg.FeatureDir, "pr.md"), prContent); err != nil {
 		return &model.StepResult{Success: false, Error: fmt.Sprintf("writing pr.md: %v", err)}
+	}
+	if err := WritePRRef(cfg.FeatureDir, PRRef{PRRef: result.PRRef, URL: result.URL, Branch: branch}); err != nil {
+		return &model.StepResult{Success: false, Error: fmt.Sprintf("writing pr.json: %v", err)}
 	}
 
 	return &model.StepResult{StepName: "pr", Success: true}

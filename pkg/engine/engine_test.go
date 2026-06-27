@@ -3,11 +3,119 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/bavocado/tomato/pkg/adapter"
 	"github.com/bavocado/tomato/pkg/config"
+	"github.com/bavocado/tomato/pkg/steps"
 )
+
+// fakeAdapterScript writes a bash adapter that appends its argv+stdin to logPath
+// and prints fixed JSON. Returns the script path.
+func fakeAdapterScript(t *testing.T, dir, logPath string) string {
+	t.Helper()
+	script := filepath.Join(dir, "fake.sh")
+	body := "#!/bin/sh\necho \"argv: $@\" >> '" + logPath + "'\ncat >> '" + logPath + "'\necho >> '" + logPath + "'\necho '{}'\n"
+	if err := os.WriteFile(script, []byte(body), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return script
+}
+
+func newEngineForTest(t *testing.T, reg *adapter.Registry) *Engine {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := config.Default()
+	config.Save(cfg, filepath.Join(dir, "tomato.yaml"))
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg != nil {
+		eng.Adapters = reg
+	}
+	return eng
+}
+
+// TestEmitStatusSkipsWithoutTaskRef verifies the status hook is a no-op when no
+// task.json exists (the task step is last in the default workflow, so earlier
+// steps must not error or block on a missing task).
+func TestEmitStatusSkipsWithoutTaskRef(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "adapter.log")
+	reg := adapter.NewRegistry()
+	reg.Set("task", &adapter.Bridge{Bin: fakeAdapterScript(t, t.TempDir(), logPath)})
+
+	eng := newEngineForTest(t, reg)
+	featureDir := t.TempDir() // no task.json here
+
+	eng.emitStatus(featureDir, "specified")
+
+	if data, _ := os.ReadFile(logPath); len(data) != 0 {
+		t.Errorf("adapter should NOT be called without a task_ref; log:\n%s", string(data))
+	}
+}
+
+// TestEmitStatusCallsUpdateStatus verifies the hook calls update-status with the
+// task_ref and status once task.json exists.
+func TestEmitStatusCallsUpdateStatus(t *testing.T) {
+	scriptDir := t.TempDir()
+	logPath := filepath.Join(scriptDir, "adapter.log")
+	reg := adapter.NewRegistry()
+	reg.Set("task", &adapter.Bridge{Bin: fakeAdapterScript(t, scriptDir, logPath)})
+
+	eng := newEngineForTest(t, reg)
+	featureDir := t.TempDir()
+	if err := steps.WriteTaskRef(featureDir, steps.TaskRef{TaskRef: "ISSUE-9"}); err != nil {
+		t.Fatal(err)
+	}
+
+	eng.emitStatus(featureDir, "implemented")
+
+	log := func() string { d, _ := os.ReadFile(logPath); return string(d) }()
+	if !strings.Contains(log, "argv: update-status") {
+		t.Errorf("expected update-status call; log:\n%s", log)
+	}
+	if !strings.Contains(log, "ISSUE-9") || !strings.Contains(log, "implemented") {
+		t.Errorf("payload missing task_ref/status; log:\n%s", log)
+	}
+}
+
+// TestBuildRegistryExpandsEnv verifies adapter env values are expanded against
+// the process environment (so "${VAR}" resolves).
+func TestBuildRegistryExpandsEnv(t *testing.T) {
+	t.Setenv("MY_TOKEN", "secret-123")
+	cfg := &config.Config{
+		Adapters: map[string]config.AdapterDef{
+			"gh": {Bin: "gh-adapter", Env: map[string]string{"TOKEN": "${MY_TOKEN}"}},
+		},
+		Roles: map[string]string{"pr": "gh"},
+	}
+	reg := buildRegistry(cfg)
+	br := reg.For("pr")
+	if br == nil {
+		t.Fatal("expected a bridge for the pr role")
+	}
+	if br.Env["TOKEN"] != "secret-123" {
+		t.Errorf("env not expanded: TOKEN=%q, want secret-123", br.Env["TOKEN"])
+	}
+}
+
+// TestBuildRegistryFallback verifies TOMATO_ADAPTER_BIN serves the built-in
+// roles when no roles are configured.
+func TestBuildRegistryFallback(t *testing.T) {
+	t.Setenv("TOMATO_ADAPTER_BIN", "/usr/bin/myadapter")
+	cfg := &config.Config{} // no roles
+	reg := buildRegistry(cfg)
+	for _, role := range []string{"pr", "task", "review"} {
+		br := reg.For(role)
+		if br == nil || br.Bin != "/usr/bin/myadapter" {
+			t.Errorf("role %q should fall back to TOMATO_ADAPTER_BIN, got %v", role, br)
+		}
+	}
+}
 
 func TestEngineLoadsDefaultWorkflow(t *testing.T) {
 	dir := t.TempDir()

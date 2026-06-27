@@ -1,12 +1,12 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
+	"github.com/bavocado/tomato/pkg/adapter"
 	"github.com/bavocado/tomato/pkg/archive"
 	"github.com/bavocado/tomato/pkg/budget"
 	"github.com/bavocado/tomato/pkg/config"
@@ -15,11 +15,11 @@ import (
 
 // Engine loads a tomato.yaml and provides workflow scheduling.
 type Engine struct {
-	Config      *config.Config
-	Workflows   map[string]config.WorkflowDef
-	RepoDir     string
-	AdapterBins map[string]string
-	Tracker     *budget.Tracker
+	Config    *config.Config
+	Workflows map[string]config.WorkflowDef
+	RepoDir   string
+	Adapters  *adapter.Registry
+	Tracker   *budget.Tracker
 }
 
 // NewEngine creates an engine by loading tomato.yaml from the given directory.
@@ -29,21 +29,7 @@ func NewEngine(dir string) (*Engine, error) {
 		return nil, err
 	}
 
-	adapterBins := map[string]string{}
-	for role, adapterName := range cfg.Roles {
-		if adapter, ok := cfg.Adapters[adapterName]; ok {
-			adapterBins[role] = adapter.Bin
-		}
-	}
-
-	if len(adapterBins) > 0 {
-		for _, bin := range adapterBins {
-			steps.GlobalAdapterBin = bin
-			break
-		}
-	} else if envBin := os.Getenv("TOMATO_ADAPTER_BIN"); envBin != "" {
-		steps.GlobalAdapterBin = envBin
-	}
+	adapters := buildRegistry(cfg)
 
 	tracker := budget.NewTracker()
 	tracker.InitFromConfig(
@@ -55,12 +41,39 @@ func NewEngine(dir string) (*Engine, error) {
 	)
 
 	return &Engine{
-		Config:      cfg,
-		Workflows:   cfg.Workflows,
-		RepoDir:     dir,
-		AdapterBins: adapterBins,
-		Tracker:     tracker,
+		Config:    cfg,
+		Workflows: cfg.Workflows,
+		RepoDir:   dir,
+		Adapters:  adapters,
+		Tracker:   tracker,
 	}, nil
+}
+
+// buildRegistry resolves the role→adapter mapping from tomato.yaml. Adapter env
+// values are expanded against the process environment (so "${GITHUB_TOKEN}"
+// works). When no roles are configured, a TOMATO_ADAPTER_BIN fallback serves
+// the built-in roles for backward compatibility.
+func buildRegistry(cfg *config.Config) *adapter.Registry {
+	reg := adapter.NewRegistry()
+	for role, name := range cfg.Roles {
+		a, ok := cfg.Adapters[name]
+		if !ok {
+			continue
+		}
+		env := map[string]string{}
+		for k, v := range a.Env {
+			env[k] = os.ExpandEnv(v)
+		}
+		reg.Set(role, &adapter.Bridge{Bin: a.Bin, Env: env})
+	}
+	if len(cfg.Roles) == 0 {
+		if bin := os.Getenv("TOMATO_ADAPTER_BIN"); bin != "" {
+			for _, role := range []string{"pr", "task", "review"} {
+				reg.Set(role, &adapter.Bridge{Bin: bin})
+			}
+		}
+	}
+	return reg
 }
 
 // HasWorkflow checks if a named workflow exists.
@@ -110,6 +123,7 @@ func (e *Engine) Run(workflowName string) error {
 			FeatureDir:     featureDir,
 			Feature:        "current-feature",
 			ModelName:      e.resolveModel(stepCfg.Name),
+			Adapters:       e.Adapters,
 			AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
 			AnthropicKey:   e.Config.Anthropic.ResolvedAuthToken(),
 			AnthropicModel: e.Config.Anthropic.ResolvedModel(),
@@ -145,9 +159,33 @@ func (e *Engine) Run(workflowName string) error {
 				}
 			}
 		}
+
+		// Status lifecycle post-hook (design §2.1): sync external task status.
+		if status := stepStatus(stepCfg.Name); status != "" {
+			e.emitStatus(featureDir, status)
+		}
 	}
 
 	return nil
+}
+
+// stepStatus maps a completed step to its external status label (design §2.1).
+// Steps without a status (review_loop emits its own) return "".
+func stepStatus(step string) string {
+	switch step {
+	case "spec":
+		return "specified"
+	case "design":
+		return "designed"
+	case "impl":
+		return "implemented"
+	case "pr":
+		return "pr_opened"
+	case "test":
+		return "tested"
+	default:
+		return ""
+	}
 }
 
 func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
@@ -162,15 +200,17 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 
 	reviewFn, _ := steps.Get("review")
 	implFn, _ := steps.Get("impl")
+	featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
+	prBridge := e.Adapters.ForAny("pr", "review")
+	prRef := steps.ReadPRRef(featureDir).PRRef
 
 	for round := 1; round <= maxRounds+1; round++ {
-		featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
-
 		reviewCfg := &steps.StepConfig{
 			RepoDir:        e.RepoDir,
 			FeatureDir:     featureDir,
 			Feature:        "current-feature",
 			ModelName:      e.resolveModel("review"),
+			Adapters:       e.Adapters,
 			AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
 			AnthropicKey:   e.Config.Anthropic.ResolvedAuthToken(),
 			AnthropicModel: e.Config.Anthropic.ResolvedModel(),
@@ -185,9 +225,18 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 		}
 
 		reviewPath := filepath.Join(featureDir, "reviews", fmt.Sprintf("r%d-comments.md", round))
+		comments, _ := os.ReadFile(reviewPath)
+
+		// Post the round's review comments to the PR.
+		e.callAdapter(prBridge, adapter.CmdCommentPR, map[string]string{
+			"pr_ref":   prRef,
+			"comments": string(comments),
+		})
+
 		if !steps.HasBlockingIssues(reviewPath) {
 			fmt.Printf("✓ review_loop converged in round %d\n", round)
-			e.callAdapterCfg("review", "mark-pr-ready", `{}`)
+			e.callAdapter(prBridge, adapter.CmdMarkPRReady, map[string]string{"pr_ref": prRef})
+			e.emitStatus(featureDir, "reviewed")
 			return nil
 		}
 
@@ -198,9 +247,10 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 				FeatureDir:     featureDir,
 				Feature:        "current-feature",
 				ModelName:      e.resolveModel("impl"),
-				AnthropicURL:   e.Config.Anthropic.BaseURL,
-				AnthropicKey:   e.Config.Anthropic.AuthToken,
-				AnthropicModel: e.Config.Anthropic.Model,
+				Adapters:       e.Adapters,
+				AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
+				AnthropicKey:   e.Config.Anthropic.ResolvedAuthToken(),
+				AnthropicModel: e.Config.Anthropic.ResolvedModel(),
 				BudgetTracker:  e.Tracker,
 			}
 			implCfg.LLMStream = steps.NewLLMStream(implCfg)
@@ -208,12 +258,18 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 			if !fixResult.Success {
 				return fmt.Errorf("fix round %d failed: %s", round, fixResult.Error)
 			}
-			e.callAdapterCfg("pr", "update-pr", `{}`)
+			e.callAdapter(prBridge, adapter.CmdUpdatePR, map[string]string{
+				"pr_ref": prRef,
+				"branch": steps.ReadPRRef(featureDir).Branch,
+			})
 		} else {
-			e.callAdapterCfg("review", "mark-pr-failed", `{}`)
-			data, _ := os.ReadFile(reviewPath)
+			e.callAdapter(prBridge, adapter.CmdMarkPRFailed, map[string]string{
+				"pr_ref":   prRef,
+				"comments": string(comments),
+			})
+			e.emitStatus(featureDir, "review_failed")
 			fmt.Fprintf(os.Stderr, "✗ review_loop exhausted after %d rounds\n", round)
-			fmt.Fprintf(os.Stderr, "  Final comments: %s\n", string(data))
+			fmt.Fprintf(os.Stderr, "  Final comments: %s\n", string(comments))
 
 			switch onFail {
 			case "continue":
@@ -266,6 +322,39 @@ func isInteractive(f *os.File) bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
+// callAdapter invokes a bridge subcommand with a JSON payload. PR/status
+// bookkeeping is best-effort: a nil bridge (no adapter configured) is a no-op,
+// and execution errors are warnings — the review verdict, not the PR
+// bookkeeping, is the real signal.
+func (e *Engine) callAdapter(br *adapter.Bridge, sub adapter.Subcommand, payload map[string]string) {
+	if br == nil {
+		return
+	}
+	data, _ := json.Marshal(payload)
+	if _, err := br.Execute(sub, string(data), nil); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠  adapter %s failed: %v\n", sub, err)
+	}
+}
+
+// emitStatus runs the §2.1 status lifecycle hook: it asks the task adapter to
+// update the external task's status. It is best-effort — it reads the task_ref
+// from task.json and skips silently when no task exists yet (the task step is
+// last in the default workflow, so earlier steps have no task to update).
+func (e *Engine) emitStatus(featureDir, status string) {
+	br := e.Adapters.For("task")
+	if br == nil {
+		return
+	}
+	taskRef := steps.ReadTaskRef(featureDir).TaskRef
+	if taskRef == "" {
+		return // no task created yet; nothing to update
+	}
+	e.callAdapter(br, adapter.CmdUpdateStatus, map[string]string{
+		"task_ref": taskRef,
+		"status":   status,
+	})
+}
+
 // rewriteArchitecture runs the §2.8 post-impl architecture rewrite, regenerating
 // the root architecture.md from the actual implementation. Failures are
 // non-fatal (the impl step itself already succeeded) and are surfaced as warnings.
@@ -275,9 +364,10 @@ func (e *Engine) rewriteArchitecture(featureDir string) error {
 		FeatureDir:     featureDir,
 		Feature:        "current-feature",
 		ModelName:      e.resolveModel("design"),
-		AnthropicURL:   e.Config.Anthropic.BaseURL,
-		AnthropicKey:   e.Config.Anthropic.AuthToken,
-		AnthropicModel: e.Config.Anthropic.Model,
+		Adapters:       e.Adapters,
+		AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
+		AnthropicKey:   e.Config.Anthropic.ResolvedAuthToken(),
+		AnthropicModel: e.Config.Anthropic.ResolvedModel(),
 		BudgetTracker:  e.Tracker,
 	}
 	cfg.LLMStream = steps.NewLLMStream(cfg)
@@ -287,17 +377,4 @@ func (e *Engine) rewriteArchitecture(featureDir string) error {
 		return fmt.Errorf("%s", result.Error)
 	}
 	return nil
-}
-
-func (e *Engine) callAdapterCfg(role, subcommand, stdinJSON string) string {
-	bin := steps.GlobalAdapterBin
-	if bin == "" {
-		return ""
-	}
-	cmd := exec.Command(bin, subcommand)
-	cmd.Dir = e.RepoDir
-	cmd.Stdin = strings.NewReader(stdinJSON)
-	cmd.Env = os.Environ()
-	out, _ := cmd.Output()
-	return string(out)
 }

@@ -76,6 +76,10 @@ func TestRunPRUsesAdapterAndWritesRefs(t *testing.T) {
 	if !strings.Contains(log, `"branch":"feature-x"`) {
 		t.Errorf("adapter stdin missing branch; log:\n%s", log)
 	}
+	// The PR body must carry the Tomato signature (chain-of-provenance).
+	if !strings.Contains(log, "Tomato-Parent:") {
+		t.Errorf("create-pr payload missing Tomato signature; log:\n%s", log)
+	}
 
 	// pr.md and pr.json must be written with the returned ref.
 	if _, err := os.Stat(filepath.Join(featureDir, "pr.md")); err != nil {

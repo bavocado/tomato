@@ -441,6 +441,10 @@ git clone https://github.com/bavocado/tomato.git
 cd tomato
 go build -o tomato .
 
+# Install git hooks (one-time per clone) — adds a Tomato signature recording
+# the parent commit hash to every commit message.
+scripts/install-hooks.sh
+
 # Run tests
 go test ./... -count=1
 
@@ -449,6 +453,11 @@ go test ./... -count=1
 #   - go vet ./...
 #   - go test ./... -count=1 -v
 ```
+
+> **Tomato signature**: commits and tomato-created PRs carry a chain-of-provenance
+> footer (`Tomato-Parent: <hash>`). The commit footer is added automatically by
+> the `prepare-commit-msg` hook installed via `scripts/install-hooks.sh`; the
+> `pr` step stamps the same footer into PR descriptions.
 
 ### Project Structure
 

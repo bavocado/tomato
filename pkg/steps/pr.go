@@ -30,15 +30,22 @@ func runPR(cfg *StepConfig, args []string) *model.StepResult {
 		}
 	}
 
+	body := fmt.Sprintf("Implemented by tomato for %q.", cfg.Feature)
+	if sig := tomatoSignature(cfg.RepoDir); sig != "" {
+		body += "\n\n" + sig
+	}
+
 	input := struct {
 		Branch string `json:"branch"`
 		Repo   string `json:"repo"`
 		Title  string `json:"title"`
+		Body   string `json:"body"`
 		Draft  bool   `json:"draft"`
 	}{
 		Branch: branch,
 		Repo:   getGitRemote(cfg),
 		Title:  fmt.Sprintf("feat: %s", cfg.Feature),
+		Body:   body,
 		Draft:  true,
 	}
 	inputJSON, _ := json.Marshal(input)

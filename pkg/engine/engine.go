@@ -18,18 +18,21 @@ type Engine struct {
 	Config    *config.Config
 	Workflows map[string]config.WorkflowDef
 	RepoDir   string
+	Feature   string
 	Adapters  *adapter.Registry
 	Tracker   *budget.Tracker
 }
 
 // NewEngine creates an engine by loading tomato.yaml from the given directory.
+// The feature defaults to the current git branch (or "current-feature"); set
+// Engine.Feature afterwards to override (e.g. from a --feature flag).
 func NewEngine(dir string) (*Engine, error) {
 	cfg, err := config.Load(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	adapters := buildRegistry(cfg)
+	adapters := BuildRegistry(cfg)
 
 	tracker := budget.NewTracker()
 	tracker.InitFromConfig(
@@ -44,16 +47,22 @@ func NewEngine(dir string) (*Engine, error) {
 		Config:    cfg,
 		Workflows: cfg.Workflows,
 		RepoDir:   dir,
+		Feature:   steps.ResolveFeature("", dir),
 		Adapters:  adapters,
 		Tracker:   tracker,
 	}, nil
 }
 
-// buildRegistry resolves the role→adapter mapping from tomato.yaml. Adapter env
+// featureDir returns the artifact directory for the engine's current feature.
+func (e *Engine) featureDir() string {
+	return steps.FeatureDir(e.RepoDir, e.Feature)
+}
+
+// BuildRegistry resolves the role→adapter mapping from tomato.yaml. Adapter env
 // values are expanded against the process environment (so "${GITHUB_TOKEN}"
 // works). When no roles are configured, a TOMATO_ADAPTER_BIN fallback serves
 // the built-in roles for backward compatibility.
-func buildRegistry(cfg *config.Config) *adapter.Registry {
+func BuildRegistry(cfg *config.Config) *adapter.Registry {
 	reg := adapter.NewRegistry()
 	for role, name := range cfg.Roles {
 		a, ok := cfg.Adapters[name]
@@ -117,11 +126,11 @@ func (e *Engine) Run(workflowName string) error {
 			return fmt.Errorf("step %d (%s): %w", i, stepCfg.Name, err)
 		}
 
-		featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
+		featureDir := e.featureDir()
 		stepConfig := &steps.StepConfig{
 			RepoDir:        e.RepoDir,
 			FeatureDir:     featureDir,
-			Feature:        "current-feature",
+			Feature:        e.Feature,
 			ModelName:      e.resolveModel(stepCfg.Name),
 			Adapters:       e.Adapters,
 			AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
@@ -144,7 +153,6 @@ func (e *Engine) Run(workflowName string) error {
 		// rewrite overwrites only architecture.md, leaving the design-intent
 		// snapshot frozen in v<N>/.
 		if stepCfg.Name == "impl" && result.Success {
-			featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
 			ver, err := archive.ArchiveTrio(featureDir)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "⚠  warning: failed to archive design trio: %v\n", err)
@@ -200,7 +208,7 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 
 	reviewFn, _ := steps.Get("review")
 	implFn, _ := steps.Get("impl")
-	featureDir := filepath.Join(e.RepoDir, "docs", "specs", "current-feature")
+	featureDir := e.featureDir()
 	prBridge := e.Adapters.ForAny("pr", "review")
 	prRef := steps.ReadPRRef(featureDir).PRRef
 
@@ -208,7 +216,7 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 		reviewCfg := &steps.StepConfig{
 			RepoDir:        e.RepoDir,
 			FeatureDir:     featureDir,
-			Feature:        "current-feature",
+			Feature:        e.Feature,
 			ModelName:      e.resolveModel("review"),
 			Adapters:       e.Adapters,
 			AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
@@ -245,7 +253,7 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 			implCfg := &steps.StepConfig{
 				RepoDir:        e.RepoDir,
 				FeatureDir:     featureDir,
-				Feature:        "current-feature",
+				Feature:        e.Feature,
 				ModelName:      e.resolveModel("impl"),
 				Adapters:       e.Adapters,
 				AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
@@ -362,7 +370,7 @@ func (e *Engine) rewriteArchitecture(featureDir string) error {
 	cfg := &steps.StepConfig{
 		RepoDir:        e.RepoDir,
 		FeatureDir:     featureDir,
-		Feature:        "current-feature",
+		Feature:        e.Feature,
 		ModelName:      e.resolveModel("design"),
 		Adapters:       e.Adapters,
 		AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),

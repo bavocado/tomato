@@ -7,6 +7,7 @@ import (
 
 	"github.com/bavocado/tomato/pkg/budget"
 	"github.com/bavocado/tomato/pkg/config"
+	"github.com/bavocado/tomato/pkg/engine"
 	"github.com/bavocado/tomato/pkg/llm"
 	"github.com/bavocado/tomato/pkg/model"
 	"github.com/bavocado/tomato/pkg/steps"
@@ -16,6 +17,12 @@ import (
 // addForceFlag adds a --force boolean flag to a command.
 func addForceFlag(cmd *cobra.Command) {
 	cmd.Flags().Bool("force", false, "overwrite existing artifacts")
+}
+
+// addFeatureFlag adds a --feature string flag selecting which
+// docs/specs/<feature>/ directory the step reads from and writes to.
+func addFeatureFlag(cmd *cobra.Command) {
+	cmd.Flags().String("feature", "", "feature name (defaults to git branch, then 'current-feature')")
 }
 
 // outputsExist returns true if any of the named files/dirs exist under featureDir.
@@ -41,6 +48,10 @@ func withFeatureAndModel(fn func(*steps.StepConfig, []string) error) func(*cobra
 		modelID := resolveModelForStep(stepName, cfg)
 		apiKey := os.Getenv(llm.EnvKeyName(extractProvider(modelID)))
 
+		// Resolve the feature: --feature flag > git branch > current-feature.
+		flagFeature, _ := cmd.Flags().GetString("feature")
+		feature := steps.ResolveFeature(flagFeature, dir)
+
 		// Initialize per-command budget tracker
 		tracker := budget.NewTracker()
 		tracker.InitFromConfig(
@@ -51,13 +62,13 @@ func withFeatureAndModel(fn func(*steps.StepConfig, []string) error) func(*cobra
 			cfg.Budget.DegradeTo,
 		)
 
-		featureDir := filepath.Join(dir, "docs", "specs", "current-feature")
 		stepCfg := &steps.StepConfig{
 			RepoDir:        dir,
-			FeatureDir:     featureDir,
-			Feature:        "current-feature",
+			FeatureDir:     steps.FeatureDir(dir, feature),
+			Feature:        feature,
 			ModelName:      modelID,
 			APIKey:         apiKey,
+			Adapters:       engine.BuildRegistry(cfg),
 			AnthropicURL:   cfg.Anthropic.ResolvedBaseURL(),
 			AnthropicKey:   cfg.Anthropic.ResolvedAuthToken(),
 			AnthropicModel: cfg.Anthropic.ResolvedModel(),

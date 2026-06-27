@@ -106,6 +106,11 @@ tomato design
 
 # Custom workflow (defined in tomato.yaml)
 tomato hotfix
+
+# Target a specific feature directory (docs/specs/<feature>/).
+# Defaults to the current git branch name, then "current-feature".
+tomato run --feature login
+tomato design --feature login
 ```
 
 ---

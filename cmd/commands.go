@@ -106,7 +106,7 @@ func isTomatoYamlIgnored(gitignorePath string) bool {
 }
 
 func NewRunCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "run [workflow]",
 		Short: "Run a workflow (default: default)",
 		Args:  cobra.MaximumNArgs(1),
@@ -116,6 +116,8 @@ func NewRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			flagFeature, _ := cmd.Flags().GetString("feature")
+			eng.Feature = steps.ResolveFeature(flagFeature, dir)
 			workflowName := "default"
 			if len(args) > 0 {
 				workflowName = args[0]
@@ -128,6 +130,8 @@ func NewRunCmd() *cobra.Command {
 			return nil
 		},
 	}
+	addFeatureFlag(cmd)
+	return cmd
 }
 
 func NewSpecCmd() *cobra.Command {
@@ -148,6 +152,7 @@ func NewSpecCmd() *cobra.Command {
 		return nil
 	})
 	addForceFlag(cmd)
+	addFeatureFlag(cmd)
 	return cmd
 }
 
@@ -169,6 +174,7 @@ func NewDesignCmd() *cobra.Command {
 		return nil
 	})
 	addForceFlag(cmd)
+	addFeatureFlag(cmd)
 	return cmd
 }
 
@@ -190,6 +196,7 @@ func NewImplCmd() *cobra.Command {
 		return nil
 	})
 	addForceFlag(cmd)
+	addFeatureFlag(cmd)
 	return cmd
 }
 
@@ -211,6 +218,7 @@ func NewReviewCmd() *cobra.Command {
 		return nil
 	})
 	addForceFlag(cmd)
+	addFeatureFlag(cmd)
 	return cmd
 }
 
@@ -232,11 +240,12 @@ func NewTestCmd() *cobra.Command {
 		return nil
 	})
 	addForceFlag(cmd)
+	addFeatureFlag(cmd)
 	return cmd
 }
 
 func NewPRCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "pr",
 		Short: "Push branch + open/update PR (draft)",
 		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
@@ -248,10 +257,12 @@ func NewPRCmd() *cobra.Command {
 			return nil
 		}),
 	}
+	addFeatureFlag(cmd)
+	return cmd
 }
 
 func NewTaskCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "task",
 		Short: "Sync external tasks via adapter",
 		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
@@ -263,6 +274,8 @@ func NewTaskCmd() *cobra.Command {
 			return nil
 		}),
 	}
+	addFeatureFlag(cmd)
+	return cmd
 }
 
 func NewHistoryCmd() *cobra.Command {

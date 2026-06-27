@@ -93,7 +93,7 @@ func TestBuildRegistryExpandsEnv(t *testing.T) {
 		},
 		Roles: map[string]string{"pr": "gh"},
 	}
-	reg := buildRegistry(cfg)
+	reg := BuildRegistry(cfg)
 	br := reg.For("pr")
 	if br == nil {
 		t.Fatal("expected a bridge for the pr role")
@@ -108,7 +108,7 @@ func TestBuildRegistryExpandsEnv(t *testing.T) {
 func TestBuildRegistryFallback(t *testing.T) {
 	t.Setenv("TOMATO_ADAPTER_BIN", "/usr/bin/myadapter")
 	cfg := &config.Config{} // no roles
-	reg := buildRegistry(cfg)
+	reg := BuildRegistry(cfg)
 	for _, role := range []string{"pr", "task", "review"} {
 		br := reg.For(role)
 		if br == nil || br.Bin != "/usr/bin/myadapter" {

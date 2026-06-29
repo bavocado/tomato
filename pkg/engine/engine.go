@@ -126,19 +126,8 @@ func (e *Engine) Run(workflowName string) error {
 			return fmt.Errorf("step %d (%s): %w", i, stepCfg.Name, err)
 		}
 
-		featureDir := e.featureDir()
-		stepConfig := &steps.StepConfig{
-			RepoDir:        e.RepoDir,
-			FeatureDir:     featureDir,
-			Feature:        e.Feature,
-			ModelName:      e.resolveModel(stepCfg.Name),
-			Adapters:       e.Adapters,
-			AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
-			AnthropicKey:   e.Config.Anthropic.ResolvedAuthToken(),
-			AnthropicModel: e.Config.Anthropic.ResolvedModel(),
-			BudgetTracker:  e.Tracker,
-		}
-		stepConfig.LLMStream = steps.NewLLMStream(stepConfig)
+			featureDir := e.featureDir()
+			stepConfig := e.stepConfig(featureDir, e.Feature, stepCfg.Name)
 
 		result := stepFn(stepConfig, nil)
 		if !result.Success {
@@ -213,18 +202,7 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 	prRef := steps.ReadPRRef(featureDir).PRRef
 
 	for round := 1; round <= maxRounds+1; round++ {
-		reviewCfg := &steps.StepConfig{
-			RepoDir:        e.RepoDir,
-			FeatureDir:     featureDir,
-			Feature:        e.Feature,
-			ModelName:      e.resolveModel("review"),
-			Adapters:       e.Adapters,
-			AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
-			AnthropicKey:   e.Config.Anthropic.ResolvedAuthToken(),
-			AnthropicModel: e.Config.Anthropic.ResolvedModel(),
-			BudgetTracker:  e.Tracker,
-		}
-		reviewCfg.LLMStream = steps.NewLLMStream(reviewCfg)
+			reviewCfg := e.stepConfig(featureDir, e.Feature, "review")
 
 		fmt.Printf("  review round %d...\n", round)
 		result := reviewFn(reviewCfg, []string{fmt.Sprintf("r%d", round)})
@@ -250,18 +228,7 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 
 		if round <= maxRounds {
 			fmt.Printf("  → round %d found blocking issues, fixing...\n", round)
-			implCfg := &steps.StepConfig{
-				RepoDir:        e.RepoDir,
-				FeatureDir:     featureDir,
-				Feature:        e.Feature,
-				ModelName:      e.resolveModel("impl"),
-				Adapters:       e.Adapters,
-				AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
-				AnthropicKey:   e.Config.Anthropic.ResolvedAuthToken(),
-				AnthropicModel: e.Config.Anthropic.ResolvedModel(),
-				BudgetTracker:  e.Tracker,
-			}
-			implCfg.LLMStream = steps.NewLLMStream(implCfg)
+				implCfg := e.stepConfig(featureDir, e.Feature, "impl")
 			fixResult := implFn(implCfg, nil)
 			if !fixResult.Success {
 				return fmt.Errorf("fix round %d failed: %s", round, fixResult.Error)
@@ -299,6 +266,24 @@ func (e *Engine) resolveModel(stepName string) string {
 		return m
 	}
 	return e.Config.Models.Default
+}
+
+func (e *Engine) stepConfig(featureDir, feature, stepName string) *steps.StepConfig {
+	modelID := e.resolveModel(stepName)
+	provider := e.Config.ResolveProviderConfig(modelID)
+	cfg := &steps.StepConfig{
+		RepoDir:        e.RepoDir,
+		FeatureDir:     featureDir,
+		Feature:        feature,
+		ModelName:      modelID,
+		Adapters:       e.Adapters,
+		AnthropicURL:   provider.ResolvedBaseURL(),
+		AnthropicKey:   provider.ResolvedAuthToken(),
+		AnthropicModel: provider.ResolvedModel(),
+		BudgetTracker:  e.Tracker,
+	}
+	cfg.LLMStream = steps.NewLLMStream(cfg)
+	return cfg
 }
 
 // askOnFail implements the on_fail: ask policy. It prompts on an interactive
@@ -367,18 +352,7 @@ func (e *Engine) emitStatus(featureDir, status string) {
 // the root architecture.md from the actual implementation. Failures are
 // non-fatal (the impl step itself already succeeded) and are surfaced as warnings.
 func (e *Engine) rewriteArchitecture(featureDir string) error {
-	cfg := &steps.StepConfig{
-		RepoDir:        e.RepoDir,
-		FeatureDir:     featureDir,
-		Feature:        e.Feature,
-		ModelName:      e.resolveModel("design"),
-		Adapters:       e.Adapters,
-		AnthropicURL:   e.Config.Anthropic.ResolvedBaseURL(),
-		AnthropicKey:   e.Config.Anthropic.ResolvedAuthToken(),
-		AnthropicModel: e.Config.Anthropic.ResolvedModel(),
-		BudgetTracker:  e.Tracker,
-	}
-	cfg.LLMStream = steps.NewLLMStream(cfg)
+	cfg := e.stepConfig(featureDir, e.Feature, "design")
 
 	result := steps.RewriteArchitecture(cfg)
 	if !result.Success {

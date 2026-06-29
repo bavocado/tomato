@@ -117,13 +117,10 @@ func buildClaudePrompt(messages []Message) string {
 }
 
 // NewClaudeCLIProvider creates a provider that shells out to the `claude` CLI.
-// baseURL / authToken / claudeModel come from tomato.yaml's `anthropic:` section.
+// baseURL / authToken / claudeModel come from tomato.yaml's provider section.
+// It does not require the CLI to exist until Stream is called, so config parsing
+// and unit tests work in environments where Claude Code is not installed.
 func NewClaudeCLIProvider(modelID, baseURL, authToken, claudeModel string) (*ClaudeCLIProvider, error) {
-	// Check if claude is available on PATH
-	if _, err := exec.LookPath("claude"); err != nil {
-		return nil, fmt.Errorf("claude CLI not found on PATH (install via: npm i -g @anthropic-ai/claude-code): %w", err)
-	}
-
 	modelName := claudeModel
 	if modelName == "" {
 		modelName = os.Getenv("ANTHROPIC_MODEL")

@@ -87,12 +87,18 @@ models:
     review: glm/glm-5.2
     test:   glm/glm-5.2
 
-anthropic:
-  base_url: https://api.anthropic.com
-  auth_token: sk-ant-xxxxx
+providers:
+  glm:
+    base_url: https://your-glm-claude-compatible-endpoint
+    auth_token: your-glm-token
+    model: glm-5.2
+  deepseek:
+    base_url: https://your-deepseek-claude-compatible-endpoint
+    auth_token: your-deepseek-token
+    model: deepseek-v4-pro
 ```
 
-> **Security**: `auth_token` is stored in plain text in `tomato.yaml`. Add `tomato.yaml` to `.gitignore` or use environment variable overrides in CI. Run `tomato init` for a reminder if not already ignored.
+> tomato runs GLM / DeepSeek / Anthropic through the `claude` CLI. For each step, tomato sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_MODEL` from `providers.<provider>` before launching `claude --print --permission-mode auto --effort high`.
 
 ### Run Your First Workflow
 
@@ -136,11 +142,30 @@ models:
     review: glm/glm-5.2
     test:   glm/glm-5.2
 
-# ── Anthropic (Claude CLI) ───────────────────────────
+# ── Claude Code Provider Routing ─────────────────────
+# GLM / DeepSeek / Anthropic are all executed through the `claude` CLI.
+# tomato maps the selected provider into ANTHROPIC_* env vars for that subprocess.
+providers:
+  glm:
+    base_url: https://your-glm-claude-compatible-endpoint
+    auth_token: ""
+    model: glm-5.2
+
+  deepseek:
+    base_url: https://your-deepseek-claude-compatible-endpoint
+    auth_token: ""
+    model: deepseek-v4-pro
+
+  anthropic:
+    base_url: https://api.anthropic.com
+    auth_token: ""
+    model: claude-sonnet-4-20250514
+
+# Legacy compatibility: still supported, equivalent to providers.anthropic.
 anthropic:
-  base_url: https://api.anthropic.com   # optional, default shown
-  auth_token: ""                         # required when using anthropic/* models
-  model: claude-sonnet-4-20250514        # optional, overrides the model name
+  base_url: https://api.anthropic.com
+  auth_token: ""
+  model: claude-sonnet-4-20250514
 
 # ── Token Budget ─────────────────────────────────────
 budget:
@@ -190,14 +215,21 @@ workflows:
 
 Model format: `provider/model`
 
-| Provider | Example | Auth Env Var | Base URL |
-|----------|---------|--------------|----------|
-| OpenAI | `openai/gpt-5` | `OPENAI_API_KEY` | `https://api.openai.com/v1` |
-| Zhipu (GLM) | `glm/glm-5.2` | `GLM_API_KEY` | `https://open.bigmodel.cn/api/paas/v4` |
-| DeepSeek | `deepseek/deepseek-4pro` | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` |
-| Anthropic | `anthropic/claude-sonnet-4` | `auth_token` in `anthropic:` config | Claude CLI subprocess |
+| Provider | Example | How tomato runs it | Config |
+|----------|---------|--------------------|--------|
+| OpenAI | `openai/gpt-5` | Direct OpenAI-compatible HTTP | `OPENAI_API_KEY` |
+| Zhipu (GLM) | `glm/glm-5.2` | `claude` CLI subprocess | `providers.glm.{base_url,auth_token,model}` → `ANTHROPIC_*` |
+| DeepSeek | `deepseek/deepseek-v4-pro` | `claude` CLI subprocess | `providers.deepseek.{base_url,auth_token,model}` → `ANTHROPIC_*` |
+| Anthropic | `anthropic/claude-sonnet-4` | `claude` CLI subprocess | `providers.anthropic` or legacy `anthropic` |
 
-All three OpenAI-compatible providers share a single protocol adapter — only `base_url` differs. Anthropic uses the `claude` CLI tool natively.
+For Claude-CLI providers, tomato launches:
+
+```bash
+ANTHROPIC_BASE_URL=<provider.base_url> \
+ANTHROPIC_AUTH_TOKEN=<provider.auth_token> \
+ANTHROPIC_MODEL=<provider.model> \
+claude --print --permission-mode auto --effort high --model <provider.model>
+```
 
 ---
 

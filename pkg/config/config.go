@@ -10,14 +10,15 @@ import (
 
 // Config is the root of tomato.yaml.
 type Config struct {
-	Feature   string                 `yaml:"feature,omitempty"`
-	Models    ModelsConfig           `yaml:"models"`
-	Anthropic AnthropicConfig        `yaml:"anthropic"`
-	Budget    BudgetConfig           `yaml:"budget"`
-	Impl      ImplConfig             `yaml:"impl"`
-	Workflows map[string]WorkflowDef `yaml:"workflows"`
-	Adapters  map[string]AdapterDef  `yaml:"adapters"`
-	Roles     map[string]string      `yaml:"roles"`
+	Feature   string                              `yaml:"feature,omitempty"`
+	Models    ModelsConfig                        `yaml:"models"`
+	Providers map[string]ProviderConnectionConfig `yaml:"providers"`
+	Anthropic AnthropicConfig                     `yaml:"anthropic"` // legacy compatibility
+	Budget    BudgetConfig                        `yaml:"budget"`
+	Impl      ImplConfig                          `yaml:"impl"`
+	Workflows map[string]WorkflowDef              `yaml:"workflows"`
+	Adapters  map[string]AdapterDef               `yaml:"adapters"`
+	Roles     map[string]string                   `yaml:"roles"`
 }
 
 // ModelsConfig defines per-step model routing.
@@ -26,12 +27,17 @@ type ModelsConfig struct {
 	Steps   map[string]string `yaml:"steps"`
 }
 
-// AnthropicConfig defines connection parameters for Anthropic's native API.
-type AnthropicConfig struct {
+// ProviderConnectionConfig defines Claude Code compatible provider settings.
+// These values are passed to the `claude` CLI as ANTHROPIC_* environment
+// variables, even when the logical provider is glm/deepseek.
+type ProviderConnectionConfig struct {
 	BaseURL   string `yaml:"base_url"`
 	AuthToken string `yaml:"auth_token"`
 	Model     string `yaml:"model"`
 }
+
+// AnthropicConfig defines legacy connection parameters for Anthropic.
+type AnthropicConfig = ProviderConnectionConfig
 
 // ResolvedAuthToken returns the effective auth token, preferring the
 // ANTHROPIC_AUTH_TOKEN environment variable over the yaml value. Design §2.4
@@ -58,6 +64,27 @@ func (a AnthropicConfig) ResolvedModel() string {
 		return env
 	}
 	return a.Model
+}
+
+// ResolveProviderConfig returns the provider connection config for a modelID.
+// It first checks providers.<provider>, then falls back to legacy anthropic.
+func (c *Config) ResolveProviderConfig(modelID string) ProviderConnectionConfig {
+	provider := modelID
+	for i := 0; i < len(modelID); i++ {
+		if modelID[i] == '/' {
+			provider = modelID[:i]
+			break
+		}
+	}
+	if c.Providers != nil {
+		if p, ok := c.Providers[provider]; ok {
+			return p
+		}
+	}
+	if provider == "anthropic" {
+		return c.Anthropic
+	}
+	return ProviderConnectionConfig{}
 }
 
 // BudgetConfig defines token budget limits.
@@ -236,17 +263,29 @@ func Save(cfg *Config, path string) error {
 // GLM-5.2 across the board, with DeepSeek for implementation.
 func Default() *Config {
 	return &Config{
-		Models: ModelsConfig{
-			Default: "glm/glm-5.2",
-			Steps: map[string]string{
-				"spec":   "glm/glm-5.2",
-				"design": "glm/glm-5.2",
-				"impl":   "deepseek/deepseek-v4-pro",
-				"review": "glm/glm-5.2",
-				"test":   "glm/glm-5.2",
+			Models: ModelsConfig{
+				Default: "glm/glm-5.2",
+				Steps: map[string]string{
+					"spec":   "glm/glm-5.2",
+					"design": "glm/glm-5.2",
+					"impl":   "deepseek/deepseek-v4-pro",
+					"review": "glm/glm-5.2",
+					"test":   "glm/glm-5.2",
+				},
 			},
-		},
-		Anthropic: AnthropicConfig{
+			Providers: map[string]ProviderConnectionConfig{
+				"glm": {
+					BaseURL:   "",
+					AuthToken: "",
+					Model:     "glm-5.2",
+				},
+				"deepseek": {
+					BaseURL:   "",
+					AuthToken: "",
+					Model:     "deepseek-v4-pro",
+				},
+			},
+			Anthropic: AnthropicConfig{
 			// Optional provider: only used when a step is routed to
 			// anthropic/* (runs via the claude CLI). Token comes from
 			// ANTHROPIC_AUTH_TOKEN env by preference (design §2.4).

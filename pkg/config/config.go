@@ -265,12 +265,12 @@ func Default() *Config {
 			"default": {
 				Steps: []WorkflowStep{
 					{Name: "spec"},
+					{Name: "task"},
 					{Name: "design"},
 					{Name: "impl"},
 					{Name: "pr"},
 					{Name: "review_loop", IsMetaStep: true, MaxRounds: 2, OnFail: "stop"},
 					{Name: "test"},
-					{Name: "task"},
 				},
 			},
 		},

@@ -79,8 +79,18 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Models.Steps["impl"] != "deepseek/deepseek-v4-pro" {
 		t.Errorf("expected impl=deepseek/deepseek-v4-pro, got %s", cfg.Models.Steps["impl"])
 	}
-	if _, ok := cfg.Workflows["default"]; !ok {
-		t.Error("default workflow should exist")
+	defaultWF, ok := cfg.Workflows["default"]
+	if !ok {
+		t.Fatal("default workflow should exist")
+	}
+	wantOrder := []string{"spec", "task", "design", "impl", "pr", "review_loop", "test"}
+	if len(defaultWF.Steps) != len(wantOrder) {
+		t.Fatalf("default workflow length = %d, want %d", len(defaultWF.Steps), len(wantOrder))
+	}
+	for i, want := range wantOrder {
+		if got := defaultWF.Steps[i].Name; got != want {
+			t.Errorf("default step[%d] = %s, want %s", i, got, want)
+		}
 	}
 }
 

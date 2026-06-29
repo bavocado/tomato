@@ -15,12 +15,12 @@ Turn a rough idea into a PR — through specs, design docs, implementation, code
 ▶ tomato run
 
   spec ──► prd.md
+  task ──► issue created on Linear/Jira (enables status updates)
   design ──► architecture.md · ui-spec.md · implementation.md
   impl ──► source code
   pr ──► draft PR on GitHub
   review_loop ──► review → fix → review → PR ready / failed
   test ──► test files + report
-  task ──► issue created on Linear/Jira
 ```
 
 ---
@@ -172,12 +172,12 @@ workflows:
   default:
     steps:
       - spec
+      - task          # create task early so status lifecycle can update it
       - design
       - impl
       - pr
       - review_loop: { max_rounds: 2, on_fail: stop }
       - test
-      - task
 
   hotfix:
     steps: [spec, impl, pr, review]

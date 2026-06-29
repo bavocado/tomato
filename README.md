@@ -55,11 +55,53 @@ Turn a rough idea into a PR — through specs, design docs, implementation, code
 
 ### Install
 
+#### One-line install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bavocado/tomato/main/install.sh | bash
+```
+
+This installs:
+
+- `tomato`
+- `github-tomato-adapter`
+
+Supported targets:
+
+| OS | Architecture |
+|----|--------------|
+| macOS | arm64 / amd64 |
+| Linux | arm64 / amd64 |
+
+Optional environment variables:
+
+```bash
+# Install a specific version/tag instead of latest
+VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/bavocado/tomato/main/install.sh | bash
+
+# Install somewhere else
+INSTALL_DIR=$HOME/bin curl -fsSL https://raw.githubusercontent.com/bavocado/tomato/main/install.sh | bash
+
+# Skip GitHub adapter
+INSTALL_ADAPTER=0 curl -fsSL https://raw.githubusercontent.com/bavocado/tomato/main/install.sh | bash
+```
+
+#### Go install
+
 ```bash
 go install github.com/bavocado/tomato@latest
 ```
 
-> A Homebrew tap is planned. For now, `go install` compiles from source.
+> `go install` only installs the main `tomato` binary. Use `install.sh` if you also want `github-tomato-adapter`.
+
+#### Build from source
+
+```bash
+git clone https://github.com/bavocado/tomato.git
+cd tomato
+go build -o tomato .
+go build -o github-tomato-adapter ./adapters/github-tomato-adapter
+```
 
 ### Initialize a Project
 

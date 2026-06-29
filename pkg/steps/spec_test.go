@@ -64,6 +64,16 @@ func TestTestPrompt(t *testing.T) {
 	})
 }
 
+func TestRewriteArchPrompt(t *testing.T) {
+	assertContainsAll(t, RewriteArchPrompt, []string{
+		"architecture.md",
+		"impl-output.md",
+		"{{.diff}}",
+		"Divergences from Original Design",
+		"REAL architecture",
+	})
+}
+
 func TestStepRegistration(t *testing.T) {
 	for _, name := range []string{"spec", "design", "impl", "review", "test"} {
 		fn, err := Get(name)

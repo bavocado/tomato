@@ -31,9 +31,16 @@ func TestArchiveTrio(t *testing.T) {
 		t.Error("ui-spec.md was not archived")
 	}
 
-	// Root files should be gone
-	if _, err := os.Stat(filepath.Join(dir, "architecture.md")); !os.IsNotExist(err) {
-		t.Error("architecture.md should have been moved from root")
+	// Root files must be retained (copy, not move) — design §3.5: the root
+	// trio is always the "latest" set and is read by downstream steps.
+	if _, err := os.Stat(filepath.Join(dir, "architecture.md")); os.IsNotExist(err) {
+		t.Error("architecture.md should remain in root after archiving")
+	}
+
+	// The archived copy must hold the pre-rewrite (design-intent) content.
+	arch, _ := os.ReadFile(filepath.Join(v1Dir, "architecture.md"))
+	if string(arch) != "# Arch v1" {
+		t.Errorf("archived architecture.md = %q, want %q", string(arch), "# Arch v1")
 	}
 }
 

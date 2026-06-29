@@ -77,3 +77,16 @@ func TestSpecForceFlagValue(t *testing.T) {
 		t.Error("expected force to be true after --force flag")
 	}
 }
+
+func TestFeatureFlagExists(t *testing.T) {
+	root := NewRootCmd("0.1.0")
+	for _, name := range []string{"spec", "design", "impl", "review", "test", "pr", "task", "run"} {
+		cmd, _, err := root.Find([]string{name})
+		if err != nil {
+			t.Fatalf("command %s not found: %v", name, err)
+		}
+		if cmd.Flags().Lookup("feature") == nil {
+			t.Errorf("command %s should have --feature flag", name)
+		}
+	}
+}

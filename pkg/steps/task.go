@@ -3,11 +3,9 @@ package steps
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
+	"github.com/bavocado/tomato/pkg/adapter"
 	"github.com/bavocado/tomato/pkg/model"
 )
 
@@ -16,11 +14,11 @@ func init() {
 }
 
 func runTask(cfg *StepConfig, args []string) *model.StepResult {
-	adapterBin := GlobalAdapterBin
-	if adapterBin == "" {
+	br := cfg.Adapters.For("task")
+	if br == nil {
 		return &model.StepResult{
 			Success: false,
-			Error:   "no adapter configured for 'task' role. Set TOMATO_ADAPTER_BIN env or configure in tomato.yaml",
+			Error:   "no adapter configured for 'task' role. Configure adapters+roles in tomato.yaml or set TOMATO_ADAPTER_BIN",
 		}
 	}
 
@@ -38,12 +36,7 @@ func runTask(cfg *StepConfig, args []string) *model.StepResult {
 	}
 	inputJSON, _ := json.Marshal(input)
 
-	cmd := exec.Command(adapterBin, "create-task")
-	cmd.Dir = cfg.RepoDir
-	cmd.Env = os.Environ()
-	cmd.Stdin = strings.NewReader(string(inputJSON))
-
-	output, err := cmd.Output()
+	output, err := br.Execute(adapter.CmdCreateTask, string(inputJSON), nil)
 	if err != nil {
 		return &model.StepResult{Success: false, Error: fmt.Sprintf("adapter create-task failed: %v", err)}
 	}
@@ -52,8 +45,13 @@ func runTask(cfg *StepConfig, args []string) *model.StepResult {
 		TaskRef string `json:"task_ref"`
 		URL     string `json:"url"`
 	}
-	if err := json.Unmarshal(output, &taskResult); err != nil {
+	if err := json.Unmarshal([]byte(output), &taskResult); err != nil {
 		return &model.StepResult{Success: false, Error: fmt.Sprintf("invalid adapter output: %v", err)}
+	}
+
+	// Persist the task ref so the status lifecycle hook can update it later.
+	if err := WriteTaskRef(cfg.FeatureDir, TaskRef{TaskRef: taskResult.TaskRef, URL: taskResult.URL}); err != nil {
+		return &model.StepResult{Success: false, Error: fmt.Sprintf("writing task.json: %v", err)}
 	}
 
 	return &model.StepResult{StepName: "task", Success: true}

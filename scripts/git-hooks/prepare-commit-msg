@@ -1,0 +1,27 @@
+#!/bin/sh
+# Tomato signature: append a chain-of-provenance signature block recording the
+# parent commit hash to every commit message (idempotent).
+#
+# Tracked in the repo and installed into .git/hooks by scripts/install-hooks.sh.
+#
+# $1 = path to the commit message file
+# $2 = commit message source (message, template, merge, squash, commit)
+msg_file="$1"
+src="$2"
+
+# Skip merges/squashes — their messages are generated and chaining is ambiguous.
+case "$src" in
+	merge|squash) exit 0 ;;
+esac
+
+# Already signed? Do nothing (avoids duplication when the author wrote it).
+if grep -q '^Tomato-Parent:' "$msg_file" 2>/dev/null; then
+	exit 0
+fi
+
+# Parent is the current HEAD (the new commit is not created yet). Skip on the
+# very first commit, where HEAD does not resolve.
+parent=$(git rev-parse --verify --quiet HEAD) || exit 0
+[ -z "$parent" ] && exit 0
+
+printf '\n🍅 Tomato signature\nTomato-Parent: %s\n' "$parent" >> "$msg_file"

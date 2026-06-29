@@ -16,9 +16,9 @@ type Provider interface {
 
 // ProviderConfig carries connection parameters for all supported providers.
 type ProviderConfig struct {
-	ModelID       string // e.g. "openai/gpt-5", "anthropic/claude-sonnet-4"
-	APIKey        string // used by OpenAI-compatible providers (openai/glm/deepseek)
-	AnthropicURL  string // ANTHROPIC_BASE_URL equivalent, from yaml
-	AnthropicKey  string // ANTHROPIC_AUTH_TOKEN equivalent, from yaml
+	ModelID        string // e.g. "openai/gpt-5", "anthropic/claude-sonnet-4"
+	APIKey         string // used by OpenAI-compatible providers (openai/glm/deepseek)
+	AnthropicURL   string // ANTHROPIC_BASE_URL equivalent, from yaml
+	AnthropicKey   string // ANTHROPIC_AUTH_TOKEN equivalent, from yaml
 	AnthropicModel string // ANTHROPIC_MODEL equivalent, from yaml
 }

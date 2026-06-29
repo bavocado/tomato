@@ -106,7 +106,7 @@ func isTomatoYamlIgnored(gitignorePath string) bool {
 }
 
 func NewRunCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "run [workflow]",
 		Short: "Run a workflow (default: default)",
 		Args:  cobra.MaximumNArgs(1),
@@ -116,6 +116,8 @@ func NewRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			flagFeature, _ := cmd.Flags().GetString("feature")
+			eng.Feature = steps.ResolveFeature(flagFeature, eng.Config.Feature, dir)
 			workflowName := "default"
 			if len(args) > 0 {
 				workflowName = args[0]
@@ -128,6 +130,8 @@ func NewRunCmd() *cobra.Command {
 			return nil
 		},
 	}
+	addFeatureFlag(cmd)
+	return cmd
 }
 
 func NewSpecCmd() *cobra.Command {
@@ -148,6 +152,7 @@ func NewSpecCmd() *cobra.Command {
 		return nil
 	})
 	addForceFlag(cmd)
+	addFeatureFlag(cmd)
 	return cmd
 }
 
@@ -169,6 +174,7 @@ func NewDesignCmd() *cobra.Command {
 		return nil
 	})
 	addForceFlag(cmd)
+	addFeatureFlag(cmd)
 	return cmd
 }
 
@@ -190,6 +196,7 @@ func NewImplCmd() *cobra.Command {
 		return nil
 	})
 	addForceFlag(cmd)
+	addFeatureFlag(cmd)
 	return cmd
 }
 
@@ -211,6 +218,7 @@ func NewReviewCmd() *cobra.Command {
 		return nil
 	})
 	addForceFlag(cmd)
+	addFeatureFlag(cmd)
 	return cmd
 }
 
@@ -232,11 +240,12 @@ func NewTestCmd() *cobra.Command {
 		return nil
 	})
 	addForceFlag(cmd)
+	addFeatureFlag(cmd)
 	return cmd
 }
 
 func NewPRCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "pr",
 		Short: "Push branch + open/update PR (draft)",
 		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
@@ -248,10 +257,12 @@ func NewPRCmd() *cobra.Command {
 			return nil
 		}),
 	}
+	addFeatureFlag(cmd)
+	return cmd
 }
 
 func NewTaskCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "task",
 		Short: "Sync external tasks via adapter",
 		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
@@ -263,6 +274,8 @@ func NewTaskCmd() *cobra.Command {
 			return nil
 		}),
 	}
+	addFeatureFlag(cmd)
+	return cmd
 }
 
 func NewHistoryCmd() *cobra.Command {
@@ -335,13 +348,17 @@ func NewConfigCmd() *cobra.Command {
 				fmt.Fprintf(out, "  %s: %s\n", step, model)
 			}
 			fmt.Fprintf(out, "\nAnthropic:\n")
-			printConfiguredValue(out, "  base_url", cfg.Anthropic.BaseURL)
-			if cfg.Anthropic.AuthToken != "" {
-				fmt.Fprintf(out, "  auth_token: ✓ configured (%s)\n", maskSecret(cfg.Anthropic.AuthToken))
+			printConfiguredValue(out, "  base_url", cfg.Anthropic.ResolvedBaseURL())
+			if token := cfg.Anthropic.ResolvedAuthToken(); token != "" {
+				src := "yaml"
+				if os.Getenv("ANTHROPIC_AUTH_TOKEN") != "" {
+					src = "env"
+				}
+				fmt.Fprintf(out, "  auth_token: ✓ configured (%s, from %s)\n", maskSecret(token), src)
 			} else {
-				fmt.Fprintf(out, "  auth_token: ✗ not set\n")
+				fmt.Fprintf(out, "  auth_token: ✗ not set (set ANTHROPIC_AUTH_TOKEN or anthropic.auth_token)\n")
 			}
-			printConfiguredValue(out, "  model", cfg.Anthropic.Model)
+			printConfiguredValue(out, "  model", cfg.Anthropic.ResolvedModel())
 
 			fmt.Fprintf(out, "\nBudget: %s\n", cfg.Budget.Mode)
 			fmt.Fprintf(out, "\nAPI keys:\n")

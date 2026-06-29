@@ -4,7 +4,7 @@ import "time"
 
 // Step defines a single execution unit in a workflow.
 type Step struct {
-	Name           string   `yaml:"-"`  // set from YAML key
+	Name           string   `yaml:"-"` // set from YAML key
 	PromptTemplate string   `yaml:"prompt,omitempty"`
 	InputPaths     []string `yaml:"inputs,omitempty"`
 	OutputPaths    []string `yaml:"outputs,omitempty"`

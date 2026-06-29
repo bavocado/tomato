@@ -10,12 +10,14 @@ import (
 
 // Config is the root of tomato.yaml.
 type Config struct {
-	Models    ModelsConfig            `yaml:"models"`
-	Anthropic AnthropicConfig         `yaml:"anthropic"`
-	Budget    BudgetConfig            `yaml:"budget"`
-	Workflows map[string]WorkflowDef  `yaml:"workflows"`
-	Adapters  map[string]AdapterDef   `yaml:"adapters"`
-	Roles     map[string]string       `yaml:"roles"`
+	Feature   string                 `yaml:"feature,omitempty"`
+	Models    ModelsConfig           `yaml:"models"`
+	Anthropic AnthropicConfig        `yaml:"anthropic"`
+	Budget    BudgetConfig           `yaml:"budget"`
+	Impl      ImplConfig             `yaml:"impl"`
+	Workflows map[string]WorkflowDef `yaml:"workflows"`
+	Adapters  map[string]AdapterDef  `yaml:"adapters"`
+	Roles     map[string]string      `yaml:"roles"`
 }
 
 // ModelsConfig defines per-step model routing.
@@ -31,6 +33,33 @@ type AnthropicConfig struct {
 	Model     string `yaml:"model"`
 }
 
+// ResolvedAuthToken returns the effective auth token, preferring the
+// ANTHROPIC_AUTH_TOKEN environment variable over the yaml value. Design §2.4
+// mandates keys come from the environment (not git); the yaml field remains as
+// a fallback for local convenience.
+func (a AnthropicConfig) ResolvedAuthToken() string {
+	if env := os.Getenv("ANTHROPIC_AUTH_TOKEN"); env != "" {
+		return env
+	}
+	return a.AuthToken
+}
+
+// ResolvedBaseURL returns the effective base URL, preferring ANTHROPIC_BASE_URL.
+func (a AnthropicConfig) ResolvedBaseURL() string {
+	if env := os.Getenv("ANTHROPIC_BASE_URL"); env != "" {
+		return env
+	}
+	return a.BaseURL
+}
+
+// ResolvedModel returns the effective model, preferring ANTHROPIC_MODEL.
+func (a AnthropicConfig) ResolvedModel() string {
+	if env := os.Getenv("ANTHROPIC_MODEL"); env != "" {
+		return env
+	}
+	return a.Model
+}
+
 // BudgetConfig defines token budget limits.
 type BudgetConfig struct {
 	Mode         string         `yaml:"mode"`
@@ -38,6 +67,22 @@ type BudgetConfig struct {
 	PerStep      map[string]int `yaml:"per_step"`
 	OnExceed     string         `yaml:"on_exceed"`
 	DegradeTo    string         `yaml:"degrade_to"`
+}
+
+// ImplConfig holds toggleable optional behaviors for the impl step.
+type ImplConfig struct {
+	// RewriteArch controls the §2.8 post-impl rewrite of architecture.md to
+	// reflect the real, as-implemented architecture. Defaults to true when
+	// unset (design §2.9.6); set false to skip the extra LLM call.
+	RewriteArch *bool `yaml:"rewrite_arch"`
+}
+
+// RewriteArchEnabled reports whether the post-impl architecture rewrite runs.
+func (c ImplConfig) RewriteArchEnabled() bool {
+	if c.RewriteArch == nil {
+		return true
+	}
+	return *c.RewriteArch
 }
 
 // WorkflowDef defines a named workflow.
@@ -151,10 +196,19 @@ func Parse(data []byte) (*Config, error) {
 		if len(wf.Steps) == 0 {
 			return nil, fmt.Errorf("workflow %q has no steps", name)
 		}
-	}
-if cfg.Models.Default == "" {
-			cfg.Models.Default = "anthropic/claude-sonnet-4-20250514"
+		for _, s := range wf.Steps {
+			// runs_on is reserved syntax for v2 remote agents (design §2.8,
+			// §5). v1 accepts only "local" (or unset); any other value is a
+			// hard error so workflows cannot silently target non-existent
+			// remote agents.
+			if s.RunsOn != "" && s.RunsOn != "local" {
+				return nil, fmt.Errorf("workflow %q step %q: runs_on: %q is reserved for v2 remote agents (only \"local\" is accepted in v1)", name, s.Name, s.RunsOn)
+			}
 		}
+	}
+	if cfg.Models.Default == "" {
+		cfg.Models.Default = "glm/glm-5.2"
+	}
 
 	return cfg, nil
 }
@@ -178,24 +232,28 @@ func Save(cfg *Config, path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// Default returns the default configuration with the balanced preset.
+// Default returns the default configuration with the balanced preset:
+// GLM-5.2 across the board, with DeepSeek for implementation.
 func Default() *Config {
-			return &Config{
-				Models: ModelsConfig{
-					Default: "openai/gpt-5",
-					Steps: map[string]string{
-						"spec":   "anthropic/claude-sonnet-4-20250514",
-						"design": "anthropic/claude-sonnet-4-20250514",
-						"impl":   "anthropic/claude-sonnet-4-20250514",
-						"review": "anthropic/claude-sonnet-4-20250514",
-						"test":   "openai/gpt-5",
-					},
-				},
-				Anthropic: AnthropicConfig{
-					BaseURL:   "https://api.anthropic.com",
-					AuthToken: "",
-					Model:     "claude-sonnet-4-20250514",
-				},
+	return &Config{
+		Models: ModelsConfig{
+			Default: "glm/glm-5.2",
+			Steps: map[string]string{
+				"spec":   "glm/glm-5.2",
+				"design": "glm/glm-5.2",
+				"impl":   "deepseek/deepseek-v4-pro",
+				"review": "glm/glm-5.2",
+				"test":   "glm/glm-5.2",
+			},
+		},
+		Anthropic: AnthropicConfig{
+			// Optional provider: only used when a step is routed to
+			// anthropic/* (runs via the claude CLI). Token comes from
+			// ANTHROPIC_AUTH_TOKEN env by preference (design §2.4).
+			BaseURL:   "https://api.anthropic.com",
+			AuthToken: "",
+			Model:     "claude-sonnet-4-20250514",
+		},
 		Budget: BudgetConfig{
 			Mode:         "balanced",
 			GlobalPerRun: 300000,
@@ -207,12 +265,12 @@ func Default() *Config {
 			"default": {
 				Steps: []WorkflowStep{
 					{Name: "spec"},
+					{Name: "task"},
 					{Name: "design"},
 					{Name: "impl"},
 					{Name: "pr"},
 					{Name: "review_loop", IsMetaStep: true, MaxRounds: 2, OnFail: "stop"},
 					{Name: "test"},
-					{Name: "task"},
 				},
 			},
 		},

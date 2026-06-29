@@ -11,7 +11,7 @@
 
 ## Diagram 1 · Default Development Workflow Main Diagram (`tomato run` full process)
 
-`tomato run` is equivalent to `tomato run default`, executing the 7 built-in steps in order: `spec → design → impl → pr → review_loop → test → task`. The `review_loop` is the only built-in meta-step (control-flow primitive), allowing up to 2 fix iterations before failing the pipeline.
+`tomato run` is equivalent to `tomato run default`, executing the 7 built-in steps in order: `spec → task → design → impl → pr → review_loop → test`. The `task` step runs early so subsequent step post-hooks can update the external task status. The `review_loop` is the only built-in meta-step (control-flow primitive), allowing up to 2 fix iterations before failing the pipeline.
 
 ```mermaid
 flowchart TD
@@ -27,7 +27,9 @@ flowchart TD
     Start --> C1["▶ tomato spec<br/>requirements analysis"]:::cmd
     C1 --> A1[/"📄 prd.md"/]:::art
 
-    A1 --> C2["▶ tomato design<br/>architecture + UI + implementation"]:::cmd
+    A1 --> CTask["▶ tomato task<br/>create external task"]:::cmd
+    CTask --> ATask[("🌐 task platform<br/>task created")]
+    ATask --> C2["▶ tomato design<br/>architecture + UI + implementation"]:::cmd
     C2 --> A2[/"📄 architecture.md<br/>📄 ui-spec.md<br/>📄 implementation.md"/]:::art
 
     A2 --> C3["▶ tomato impl<br/>code implementation"]:::cmd
@@ -56,12 +58,7 @@ flowchart TD
     A3 -.supplementary context.-> C5
     C5 --> A5[/"🧪 test files + report"/]:::art
 
-    A5 --> C6["▶ tomato task<br/>sync external tasks"]:::cmd
-    A1 -.supplementary context.-> C6
-    A2 -.supplementary context.-> C6
-    C6 --> A6[("🌐 task platform updated<br/>Linear / Jira / ...")]:::ext
-
-    A6 --> Done([✅ tomato run complete]):::ep
+    A5 --> Done([✅ tomato run complete]):::ep
 ```
 
 ### Reading notes
@@ -81,12 +78,12 @@ flowchart TD
 | Step | Main input | Supplementary context | Main artifact | post-hook |
 |------|--------|------------|--------|------------|
 | spec | User's rough idea | — | `prd.md` | status → `specified` |
+| task | `prd.md` | — | external task created (`task.json`) | enables later status post-hooks |
 | design | `prd.md` | — | `architecture.md` / `ui-spec.md` / `implementation.md` | status → `designed` |
 | impl | design trio | — | source diff | status → `implemented`; trio archived to `v<N>/`; real `architecture.md` rewritten |
 | pr | git working tree | — | `pr.md` (PR ref + URL) | status → `pr_opened` (draft) |
 | review_loop | source diff + `pr.md` | — | `reviews/r<n>-comments.md`, PR comments posted | status → `reviewed` (pass) OR `review_failed` (pipeline stops) |
 | test | source diff | design trio | test files + report | status → `tested` |
-| task | (previous artifacts) | `prd.md` + design trio | external task system update | — (task creation itself) |
 
 ---
 

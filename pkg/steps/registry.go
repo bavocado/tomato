@@ -5,22 +5,26 @@ import (
 	"path/filepath"
 	"strings"
 
-"github.com/bavocado/tomato/pkg/budget"
-"github.com/bavocado/tomato/pkg/llm"
-"github.com/bavocado/tomato/pkg/model"
-"github.com/bavocado/tomato/pkg/runner"
+	"github.com/bavocado/tomato/pkg/adapter"
+	"github.com/bavocado/tomato/pkg/budget"
+	"github.com/bavocado/tomato/pkg/llm"
+	"github.com/bavocado/tomato/pkg/model"
+	"github.com/bavocado/tomato/pkg/runner"
 )
 
 // StepConfig is the minimal config for running a step.
 type StepConfig struct {
-	RepoDir        string
-	FeatureDir     string
-	Feature        string
-	ModelName      string
-	APIKey         string
-	PromptVersion  string
-	LLMStream      runner.LLMFunc
-	BudgetTracker  *budget.Tracker
+	RepoDir       string
+	FeatureDir    string
+	Feature       string
+	ModelName     string
+	APIKey        string
+	PromptVersion string
+	LLMStream     runner.LLMFunc
+	BudgetTracker *budget.Tracker
+	// Adapters resolves a workflow role (e.g. "pr", "task") to the adapter
+	// Bridge that serves it. May be nil when no adapter is configured.
+	Adapters *adapter.Registry
 	// Anthropic-specific connection parameters (from tomato.yaml)
 	AnthropicURL   string
 	AnthropicKey   string
@@ -29,9 +33,6 @@ type StepConfig struct {
 
 // StepFunc is a function that executes a step and returns a result.
 type StepFunc func(cfg *StepConfig, args []string) *model.StepResult
-
-// GlobalAdapterBin stores the path to the adapter binary set by the engine.
-var GlobalAdapterBin string
 
 var registry = map[string]StepFunc{}
 

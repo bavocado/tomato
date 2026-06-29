@@ -15,12 +15,12 @@ Turn a rough idea into a PR — through specs, design docs, implementation, code
 ▶ tomato run
 
   spec ──► prd.md
+  task ──► issue created on Linear/Jira (enables status updates)
   design ──► architecture.md · ui-spec.md · implementation.md
   impl ──► source code
   pr ──► draft PR on GitHub
   review_loop ──► review → fix → review → PR ready / failed
   test ──► test files + report
-  task ──► issue created on Linear/Jira
 ```
 
 ---
@@ -79,13 +79,13 @@ Edit `tomato.yaml` with your API keys:
 
 ```yaml
 models:
-  default: openai/gpt-5
+  default: glm/glm-5.2
   steps:
-    spec:   anthropic/claude-sonnet-4-20250514
-    design: anthropic/claude-sonnet-4-20250514
-    impl:   anthropic/claude-sonnet-4-20250514
-    review: anthropic/claude-sonnet-4-20250514
-    test:   openai/gpt-5
+    spec:   glm/glm-5.2
+    design: glm/glm-5.2
+    impl:   deepseek/deepseek-v4-pro
+    review: glm/glm-5.2
+    test:   glm/glm-5.2
 
 anthropic:
   base_url: https://api.anthropic.com
@@ -106,6 +106,17 @@ tomato design
 
 # Custom workflow (defined in tomato.yaml)
 tomato hotfix
+
+# Target a specific feature directory (docs/specs/<feature>/).
+# Precedence: --feature flag > tomato.yaml `feature:` > git branch > "current-feature".
+tomato run --feature login
+tomato design --feature login
+```
+
+Or pin the feature in `tomato.yaml` so you don't pass `--feature` each time:
+
+```yaml
+feature: login
 ```
 
 ---
@@ -117,13 +128,13 @@ tomato hotfix
 ```yaml
 # ── Model Routing ──────────────────────────────────
 models:
-  default: openai/gpt-5              # fallback when a step has no specific model
+  default: glm/glm-5.2              # fallback when a step has no specific model
   steps:
-    spec:   anthropic/claude-sonnet-4
-    design: anthropic/claude-sonnet-4
-    impl:   anthropic/claude-sonnet-4
-    review: anthropic/claude-sonnet-4
-    test:   openai/gpt-5
+    spec:   glm/glm-5.2
+    design: glm/glm-5.2
+    impl:   deepseek/deepseek-v4-pro
+    review: glm/glm-5.2
+    test:   glm/glm-5.2
 
 # ── Anthropic (Claude CLI) ───────────────────────────
 anthropic:
@@ -161,12 +172,12 @@ workflows:
   default:
     steps:
       - spec
+      - task          # create task early so status lifecycle can update it
       - design
       - impl
       - pr
       - review_loop: { max_rounds: 2, on_fail: stop }
       - test
-      - task
 
   hotfix:
     steps: [spec, impl, pr, review]
@@ -430,6 +441,10 @@ git clone https://github.com/bavocado/tomato.git
 cd tomato
 go build -o tomato .
 
+# Install git hooks (one-time per clone) — adds a Tomato signature recording
+# the parent commit hash to every commit message.
+scripts/install-hooks.sh
+
 # Run tests
 go test ./... -count=1
 
@@ -438,6 +453,11 @@ go test ./... -count=1
 #   - go vet ./...
 #   - go test ./... -count=1 -v
 ```
+
+> **Tomato signature**: commits and tomato-created PRs carry a chain-of-provenance
+> footer (`Tomato-Parent: <hash>`). The commit footer is added automatically by
+> the `prepare-commit-msg` hook installed via `scripts/install-hooks.sh`; the
+> `pr` step stamps the same footer into PR descriptions.
 
 ### Project Structure
 

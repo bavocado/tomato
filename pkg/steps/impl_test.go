@@ -76,3 +76,46 @@ func TestWriteCodeBlocks(t *testing.T) {
 		t.Errorf("util.go wrong: %q", string(data))
 	}
 }
+
+// TestWriteCodeBlocksRejectsTraversal verifies that "../" paths from LLM output
+// cannot escape the repo root: the safe sibling is written, the escaping path
+// is skipped and reported, and no file lands outside baseDir.
+func TestWriteCodeBlocksRejectsTraversal(t *testing.T) {
+	parent := t.TempDir()
+	baseDir := filepath.Join(parent, "repo")
+	os.MkdirAll(baseDir, 0755)
+
+	blocks := map[string]string{
+		"safe.go":           "package safe\n",
+		"../escape.go":      "package evil\n",
+		"../../etc/evil.go": "package evil\n",
+	}
+
+	err := writeCodeBlocks(baseDir, blocks)
+	if err == nil {
+		t.Fatal("expected error reporting skipped unsafe paths")
+	}
+
+	// Safe file written inside baseDir.
+	if _, err := os.Stat(filepath.Join(baseDir, "safe.go")); err != nil {
+		t.Errorf("safe.go should have been written: %v", err)
+	}
+	// Escaping files must NOT exist outside baseDir.
+	if _, err := os.Stat(filepath.Join(parent, "escape.go")); !os.IsNotExist(err) {
+		t.Error("../escape.go escaped the repo root")
+	}
+}
+
+// TestWriteCodeBlocksRejectsAbsolute verifies absolute paths are skipped.
+func TestWriteCodeBlocksRejectsAbsolute(t *testing.T) {
+	baseDir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "abs-evil.go")
+
+	err := writeCodeBlocks(baseDir, map[string]string{target: "package evil\n"})
+	if err == nil {
+		t.Fatal("expected error for absolute path")
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Error("absolute path was written outside baseDir")
+	}
+}

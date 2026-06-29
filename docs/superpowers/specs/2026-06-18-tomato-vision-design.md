@@ -144,6 +144,7 @@ workflows:
   default:
     steps:
       - spec
+      - task                 # create external task early for status post-hooks
       - design
       - impl
       - pr
@@ -151,7 +152,6 @@ workflows:
           max_rounds: 2          # at most 2 fix iterations
           on_fail: stop          # stop pipeline on exhaustion
       - test
-      - task
 ```
 
 `tomato run` is equivalent to `tomato run default`, for users who "don't want to configure anything, just run the pipeline".
@@ -165,12 +165,12 @@ workflows:
   default:
     steps:
       - spec
+      - task
       - design
       - impl
       - pr
       - review_loop: { max_rounds: 2, on_fail: stop }
       - test
-      - task
 
   hotfix:
     steps: [spec, impl, pr, review]      # single-shot review, no loop

@@ -7,6 +7,7 @@ import (
 
 	"github.com/bavocado/tomato/pkg/budget"
 	"github.com/bavocado/tomato/pkg/config"
+	"github.com/bavocado/tomato/pkg/engine"
 	"github.com/bavocado/tomato/pkg/llm"
 	"github.com/bavocado/tomato/pkg/model"
 	"github.com/bavocado/tomato/pkg/steps"
@@ -16,6 +17,12 @@ import (
 // addForceFlag adds a --force boolean flag to a command.
 func addForceFlag(cmd *cobra.Command) {
 	cmd.Flags().Bool("force", false, "overwrite existing artifacts")
+}
+
+// addFeatureFlag adds a --feature string flag selecting which
+// docs/specs/<feature>/ directory the step reads from and writes to.
+func addFeatureFlag(cmd *cobra.Command) {
+	cmd.Flags().String("feature", "", "feature name (defaults to git branch, then 'current-feature')")
 }
 
 // outputsExist returns true if any of the named files/dirs exist under featureDir.
@@ -30,44 +37,48 @@ func outputsExist(featureDir string, names ...string) bool {
 }
 
 func withFeatureAndModel(fn func(*steps.StepConfig, []string) error) func(*cobra.Command, []string) error {
-		return func(cmd *cobra.Command, args []string) error {
-			dir, _ := os.Getwd()
-			cfg, err := config.Load(dir)
-			if err != nil {
-				return fmt.Errorf("loading config: %w\nRun `tomato init` first", err)
-			}
-
-			stepName := cmd.Use
-			modelID := resolveModelForStep(stepName, cfg)
-			apiKey := os.Getenv(llm.EnvKeyName(extractProvider(modelID)))
-
-			// Initialize per-command budget tracker
-			tracker := budget.NewTracker()
-			tracker.InitFromConfig(
-				cfg.Budget.Mode,
-				cfg.Budget.PerStep,
-				cfg.Budget.GlobalPerRun,
-				cfg.Budget.OnExceed,
-				cfg.Budget.DegradeTo,
-			)
-
-			featureDir := filepath.Join(dir, "docs", "specs", "current-feature")
-			stepCfg := &steps.StepConfig{
-				RepoDir:        dir,
-				FeatureDir:     featureDir,
-				Feature:        "current-feature",
-				ModelName:      modelID,
-				APIKey:         apiKey,
-				AnthropicURL:   cfg.Anthropic.BaseURL,
-				AnthropicKey:   cfg.Anthropic.AuthToken,
-				AnthropicModel: cfg.Anthropic.Model,
-				BudgetTracker:  tracker,
-			}
-			stepCfg.LLMStream = steps.NewLLMStream(stepCfg)
-
-			return fn(stepCfg, args)
+	return func(cmd *cobra.Command, args []string) error {
+		dir, _ := os.Getwd()
+		cfg, err := config.Load(dir)
+		if err != nil {
+			return fmt.Errorf("loading config: %w\nRun `tomato init` first", err)
 		}
+
+		stepName := cmd.Use
+		modelID := resolveModelForStep(stepName, cfg)
+		apiKey := os.Getenv(llm.EnvKeyName(extractProvider(modelID)))
+
+		// Resolve the feature: --feature flag > tomato.yaml > git branch > current-feature.
+		flagFeature, _ := cmd.Flags().GetString("feature")
+		feature := steps.ResolveFeature(flagFeature, cfg.Feature, dir)
+
+		// Initialize per-command budget tracker
+		tracker := budget.NewTracker()
+		tracker.InitFromConfig(
+			cfg.Budget.Mode,
+			cfg.Budget.PerStep,
+			cfg.Budget.GlobalPerRun,
+			cfg.Budget.OnExceed,
+			cfg.Budget.DegradeTo,
+		)
+
+		stepCfg := &steps.StepConfig{
+			RepoDir:        dir,
+			FeatureDir:     steps.FeatureDir(dir, feature),
+			Feature:        feature,
+			ModelName:      modelID,
+			APIKey:         apiKey,
+			Adapters:       engine.BuildRegistry(cfg),
+			AnthropicURL:   cfg.Anthropic.ResolvedBaseURL(),
+			AnthropicKey:   cfg.Anthropic.ResolvedAuthToken(),
+			AnthropicModel: cfg.Anthropic.ResolvedModel(),
+			BudgetTracker:  tracker,
+		}
+		stepCfg.LLMStream = steps.NewLLMStream(stepCfg)
+
+		return fn(stepCfg, args)
 	}
+}
 
 func resolveModelForStep(stepName string, cfg *config.Config) string {
 	if m, ok := cfg.Models.Steps[stepName]; ok {

@@ -5,6 +5,7 @@
 
 # Tomato runtime data
 .tomato/
+.tomato-local-build/
 
 # Environment / secrets
 .env

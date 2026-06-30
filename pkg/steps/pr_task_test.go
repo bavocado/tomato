@@ -110,6 +110,49 @@ func TestRunPRNoAdapterFails(t *testing.T) {
 	}
 }
 
+func TestPreparePRBranchCreatesFeatureBranchFromMainAndCommits(t *testing.T) {
+	repo := t.TempDir()
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "t@t.com"},
+		{"config", "user.name", "T"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+		}
+	}
+	os.WriteFile(filepath.Join(repo, "initial.txt"), []byte("initial"), 0644)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+	// Ensure branch is main for this test.
+	runGit(t, repo, "branch", "-M", "main")
+
+	os.WriteFile(filepath.Join(repo, "generated.go"), []byte("package main\n"), 0644)
+
+	branch, err := preparePRBranch(repo, "data-models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch != "tomato/data-models" {
+		t.Fatalf("expected tomato/data-models branch, got %s", branch)
+	}
+	current := getCurrentBranch(repo)
+	if current != "tomato/data-models" {
+		t.Fatalf("expected current branch tomato/data-models, got %s", current)
+	}
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = repo
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("expected clean working tree after preparePRBranch, got %q", string(out))
+	}
+}
+
 func TestRunTaskUsesAdapterAndWritesRef(t *testing.T) {
 	repo := t.TempDir()
 	featureDir := filepath.Join(repo, "docs", "specs", "current-feature")

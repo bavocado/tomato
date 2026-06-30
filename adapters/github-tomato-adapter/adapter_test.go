@@ -52,6 +52,17 @@ func TestCreateTaskNeedsInput(t *testing.T) {
 	}
 }
 
+func TestCreatePRArgsIncludesHeadBranch(t *testing.T) {
+	args := createPRArgs("feat: demo", "body", "tomato/demo")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--head tomato/demo") {
+		t.Fatalf("expected --head tomato/demo in args, got %v", args)
+	}
+	if strings.Contains(joined, "--json") {
+		t.Fatalf("create-pr args must not include unsupported --json flag: %v", args)
+	}
+}
+
 func TestParsePRCreateOutputURL(t *testing.T) {
 	out := "https://github.com/bavocado/tomato/pull/42\n"
 	result := parsePRCreateOutput(out)

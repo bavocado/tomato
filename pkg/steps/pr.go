@@ -16,10 +16,10 @@ func init() {
 }
 
 func runPR(cfg *StepConfig, args []string) *model.StepResult {
-	// Get the current git branch
-	branch := getCurrentBranch(cfg.RepoDir)
-	if branch == "" {
-		return &model.StepResult{Success: false, Error: "not on a git branch; commit changes first"}
+	// Ensure code is on a PR-capable feature branch with generated changes committed.
+	branch, err := preparePRBranch(cfg.RepoDir, cfg.Feature)
+	if err != nil {
+		return &model.StepResult{Success: false, Error: err.Error()}
 	}
 
 	br := cfg.Adapters.For("pr")
@@ -83,6 +83,63 @@ func getCurrentBranch(dir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func preparePRBranch(repoDir, feature string) (string, error) {
+	branch := getCurrentBranch(repoDir)
+	if branch == "" {
+		return "", fmt.Errorf("not on a git branch; initialize git and commit first")
+	}
+	if branch == "main" || branch == "master" {
+		branch = "tomato/" + sanitizeBranchPart(feature)
+		if err := runGitCmd(repoDir, "checkout", "-B", branch); err != nil {
+			return "", fmt.Errorf("creating PR branch %s: %w", branch, err)
+		}
+	}
+
+	if err := runGitCmd(repoDir, "add", "-A"); err != nil {
+		return "", fmt.Errorf("staging changes: %w", err)
+	}
+	if hasStagedChanges(repoDir) {
+		msg := fmt.Sprintf("feat: %s", feature)
+		if err := runGitCmd(repoDir, "commit", "-m", msg); err != nil {
+			return "", fmt.Errorf("committing changes for PR: %w", err)
+		}
+	}
+
+	// Push only when a remote is configured. Unit tests use local repos without remotes.
+	if getGitRemote(&StepConfig{RepoDir: repoDir}) != "" {
+		if err := runGitCmd(repoDir, "push", "-u", "origin", branch); err != nil {
+			return "", fmt.Errorf("pushing PR branch %s: %w", branch, err)
+		}
+	}
+	return branch, nil
+}
+
+func hasStagedChanges(repoDir string) bool {
+	cmd := exec.Command("git", "diff", "--cached", "--quiet")
+	cmd.Dir = repoDir
+	return cmd.Run() != nil
+}
+
+func runGitCmd(repoDir string, args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func sanitizeBranchPart(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "current-feature"
+	}
+	s = strings.ReplaceAll(s, " ", "-")
+	s = strings.ReplaceAll(s, "/", "-")
+	return s
 }
 
 func getGitRemote(cfg *StepConfig) string {

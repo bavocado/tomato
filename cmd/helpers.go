@@ -99,15 +99,15 @@ func extractProvider(modelID string) string {
 }
 
 func resolveProviderBaseURL(p config.ProviderConnectionConfig) string {
-	return p.ResolvedBaseURL()
+	return p.BaseURL
 }
 
 func resolveProviderAuthToken(p config.ProviderConnectionConfig) string {
-	return p.ResolvedAuthToken()
+	return p.AuthToken
 }
 
 func resolveProviderModel(p config.ProviderConnectionConfig) string {
-	return p.ResolvedModel()
+	return p.Model
 }
 
 func runStepWithName(name string, cfg *steps.StepConfig) *model.StepResult {

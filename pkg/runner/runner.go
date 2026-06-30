@@ -37,8 +37,10 @@ func Execute(
 ) *model.StepResult {
 	start := time.Now()
 	runID := runid.Generate()
+	logStep(stepName, "run=%s model=%s start", runID, modelName)
 
 	// Build prompts from input files
+	logStep(stepName, "building prompt from %d input file(s)", len(inputFiles))
 	messages, err := buildMessages(promptTemplate, inputFiles, repoDir)
 	if err != nil {
 		return failure(stepName, runID, start, modelName, err)
@@ -53,6 +55,7 @@ func Execute(
 
 	if tracker != nil {
 		estimatedIn := budget.EstimateTokens(promptText)
+		logStep(stepName, "estimated input tokens=%d", estimatedIn)
 		// Global check first. Only "fail" aborts; "warn" (the design default)
 		// and "degrade" proceed (design §2.9.4). The old code hard-failed on
 		// every policy, which reversed "warn" — the documented default is
@@ -66,6 +69,7 @@ func Execute(
 	}
 
 	// Call LLM
+	logStep(stepName, "calling LLM model=%s", modelName)
 	var response strings.Builder
 	err = llmStream(messages, func(chunk string) {
 		response.WriteString(chunk)
@@ -78,6 +82,7 @@ func Execute(
 	responseText := response.String()
 	tokensIn := budget.EstimateTokens(promptText)
 	tokensOut := budget.EstimateTokens(responseText)
+	logStep(stepName, "LLM completed: tokens in=%d out=%d response_chars=%d", tokensIn, tokensOut, len(responseText))
 
 	if tracker != nil {
 		tracker.Record(stepName, tokensIn, tokensOut)
@@ -89,6 +94,7 @@ func Execute(
 	}
 
 	// Write output artifacts — support artifact splitting via ---TOMATO-ARTIFACT: filename--- markers
+	logStep(stepName, "writing %d artifact(s)", len(outputFiles))
 	artifactParts := splitArtifacts(responseText)
 	// If the response carried no artifact markers but the step expects multiple
 	// outputs, the fallback writes the ENTIRE response to every output file —
@@ -117,6 +123,7 @@ func Execute(
 		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
 			return failure(stepName, runID, start, modelName, err)
 		}
+		logStep(stepName, "wrote artifact %s (%d bytes)", fullPath, len(content))
 	}
 
 	// Write run log
@@ -135,6 +142,7 @@ func Execute(
 		OutputFiles: outputFiles,
 	}
 	writeMeta(meta, repoDir, runID)
+	logStep(stepName, "run log written: .tomato/runs/%s/meta.json", runID)
 
 	return &model.StepResult{
 		StepName:   stepName,
@@ -146,6 +154,11 @@ func Execute(
 		TokensOut:  tokensOut,
 		Success:    true,
 	}
+}
+
+// logStep writes a concise progress line to stderr.
+func logStep(stepName, format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, "[%s] "+format+"\n", append([]interface{}{stepName}, args...)...)
 }
 
 // budgetShouldProceed is consulted when a pre-call budget check would be

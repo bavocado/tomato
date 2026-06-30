@@ -366,13 +366,13 @@ func NewConfigCmd() *cobra.Command {
 			}
 			for name, p := range cfg.Providers {
 				fmt.Fprintf(out, "  %s:\n", name)
-				printConfiguredValue(out, "    base_url", p.ResolvedBaseURL())
-				if token := p.ResolvedAuthToken(); token != "" {
+				printConfiguredValue(out, "    base_url", p.BaseURL)
+				if token := p.AuthToken; token != "" {
 					fmt.Fprintf(out, "    auth_token: ✓ configured (%s, from yaml)\n", maskSecret(token))
 				} else {
 					fmt.Fprintf(out, "    auth_token: ✗ not set\n")
 				}
-				printConfiguredValue(out, "    model", p.ResolvedModel())
+				printConfiguredValue(out, "    model", p.Model)
 			}
 
 			fmt.Fprintf(out, "\nBudget: %s\n", cfg.Budget.Mode)

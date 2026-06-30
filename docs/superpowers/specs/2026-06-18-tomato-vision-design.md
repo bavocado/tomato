@@ -15,6 +15,50 @@
 
 ---
 
+## Current Implementation Notes (2026-06-30)
+
+The codebase has evolved beyond the original draft in several important ways:
+
+1. **Default workflow order** is now:
+
+   ```yaml
+   steps: [spec, task, design, impl, pr, review_loop, test]
+   ```
+
+   `task` runs immediately after `spec` so later steps can update external task status.
+
+2. **Provider routing** uses Claude Code CLI for GLM / DeepSeek / Anthropic:
+
+   ```yaml
+   providers:
+     glm:
+       base_url: ...
+       auth_token: ...
+       model: glm-5.2
+     deepseek:
+       base_url: ...
+       auth_token: ...
+       model: deepseek-v4-pro
+   ```
+
+   tomato maps these values into `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_MODEL` before launching:
+
+   ```bash
+   claude --print --permission-mode auto --effort high --model <provider.model>
+   ```
+
+3. **Claude CLI timeout** is implemented via `TOMATO_CLAUDE_TIMEOUT` (default `30m`). On timeout, tomato kills the whole Claude process group so child commands such as `make build` do not survive.
+
+4. **`tomato pr` prepares a safe PR branch**. If the current branch is `main` or `master`, tomato switches to `tomato/<feature>`, commits generated changes, pushes the branch when `origin` exists, and asks the adapter to create a draft PR using `--head <branch>`.
+
+5. **`impl` writes real source files** by extracting fenced code blocks from `impl-output.md` using the ` ```lang:path/to/file ` convention.
+
+6. **`spec` input/output are separated**: `idea.txt` is the input, `prd.md` is the generated PRD.
+
+These notes should be folded into a future rewrite of this vision document, but are recorded here so the design matches current behavior.
+
+---
+
 ## 1. Background & Positioning
 
 ### 1.1 Industry Landscape Summary
@@ -70,7 +114,7 @@
 
 ## 2. Domain Model & Workflow
 
-### 2.1 Six Built-in Steps (first-class citizens)
+### 2.1 Seven Built-in Steps (first-class citizens)
 
 Each step is independently callable, independently runnable, and independently produces markdown/code artifacts. They communicate through **files** rather than in-memory objects — all artifacts are git-friendly.
 

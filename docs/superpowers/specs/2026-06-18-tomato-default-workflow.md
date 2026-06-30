@@ -36,7 +36,7 @@ flowchart TD
     C3 --> A3[/"💾 source diff"/]:::art
     A3 -->|post-hook| S1[/"📤 status → implemented<br/>trio archived to v&lt;N&gt;/<br/>real architecture.md rewritten"/]:::art
 
-    A3 --> C4["▶ tomato pr<br/>push branch + open draft PR"]:::cmd
+    A3 --> C4["▶ tomato pr<br/>create tomato/&lt;feature&gt; branch<br/>commit + push + open draft PR"]:::cmd
     C4 -->|adapter create-pr| Ext1[("🌐 GitHub/GitLab<br/>draft PR opened")]:::ext
     Ext1 --> A4[/"📄 pr.md<br/>(ref + URL)"/]:::art
 
@@ -81,7 +81,7 @@ flowchart TD
 | task | `prd.md` | — | external task created (`task.json`) | enables later status post-hooks |
 | design | `prd.md` | — | `architecture.md` / `ui-spec.md` / `implementation.md` | status → `designed` |
 | impl | design trio | — | source diff | status → `implemented`; trio archived to `v<N>/`; real `architecture.md` rewritten |
-| pr | git working tree | — | `pr.md` (PR ref + URL) | status → `pr_opened` (draft) |
+| pr | git working tree | `pr.md` from prior attempts (if any) | `pr.md` + `pr.json` (PR ref + URL) | if on main/master: create `tomato/<feature>` branch; commit generated changes; push branch; status → `pr_opened` |
 | review_loop | source diff + `pr.md` | — | `reviews/r<n>-comments.md`, PR comments posted | status → `reviewed` (pass) OR `review_failed` (pipeline stops) |
 | test | source diff | design trio | test files + report | status → `tested` |
 

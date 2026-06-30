@@ -285,19 +285,40 @@ ANTHROPIC_MODEL=<provider.model> \
 claude --print --permission-mode auto --effort high --model <provider.model>
 ```
 
+Claude execution has a timeout to avoid hanging forever when Claude runs child commands such as `make build`:
+
+```bash
+# default: 30m
+export TOMATO_CLAUDE_TIMEOUT=10m
+```
+
+On timeout, tomato kills the whole Claude process group so child processes do not remain running.
+
 ---
 
 ## Steps Reference
 
 | Step | Command | Input | Output | API Key |
 |------|---------|-------|--------|---------|
-| **spec** | `tomato spec` | User's rough idea | `prd.md` | Per model config |
+| **spec** | `tomato spec` | `idea.txt` | `prd.md` | Per model config |
 | **design** | `tomato design` | `prd.md` | `architecture.md` + `ui-spec.md` + `implementation.md` | Per model config |
-| **impl** | `tomato impl` | design trio | Source code diff | Per model config |
+| **impl** | `tomato impl` | design trio | `impl-output.md` + extracted source files | Per model config |
 | **pr** | `tomato pr` | Git working tree | Draft PR on GitHub/GitLab | Adapter (`GITHUB_TOKEN`) |
-| **review** | `tomato review` | Code diff + design | `reviews/r<n>-comments.md` with severity labels | Per model config |
+| **review** | `tomato review` | Real `git diff` + design | `reviews/r<n>-comments.md` with severity labels | Per model config |
 | **test** | `tomato test` | Code + design | Test files + report | Per model config |
 | **task** | `tomato task` | spec/design | Issue/task on Linear/Jira/GitHub | Adapter (`GITHUB_TOKEN`) |
+
+### PR Branch Behavior
+
+`tomato pr` prepares a PR-safe branch before calling the adapter:
+
+1. If the current branch is `main` or `master`, tomato switches to `tomato/<feature>`.
+2. It stages generated changes with `git add -A`.
+3. If there are staged changes, it commits them as `feat: <feature>`.
+4. If `origin` exists, it pushes the branch with `git push -u origin <branch>`.
+5. The GitHub adapter calls `gh pr create --head <branch>`.
+
+This avoids creating a PR from `main` to `main` and avoids `gh pr create` failing on uncommitted changes.
 
 ### review_loop Meta-Step
 
@@ -330,10 +351,12 @@ my-project/
 ├── .gitignore                         # created by init, includes .tomato/
 │
 ├── docs/specs/<feature>/              ★ design artifacts (in git)
+│   ├── idea.txt                       ← user's rough idea / original input
 │   ├── prd.md                         ← always latest
 │   ├── architecture.md                ← always latest (rewritten after impl with real arch)
 │   ├── ui-spec.md                     ← always latest
 │   ├── implementation.md              ← always latest
+│   ├── impl-output.md                 ← implementation output; code blocks are extracted to source files
 │   ├── pr.md                          ← PR ref + URL
 │   ├── v1/                            ← archive after round 1 of design+impl
 │   │   ├── architecture.md
@@ -559,7 +582,7 @@ tomato/
 │   ├── model/                      # Step, StepResult, RunMeta types
 │   ├── runner/                     # step executor (prompt → LLM → artifacts → run log)
 │   ├── llm/                        # multi-provider LLM gateway
-│   │   ├── gateway.go              # OpenAI-compatible providers (OpenAI/GLM/DeepSeek)
+│   │   ├── gateway.go              # provider routing (OpenAI direct, GLM/DeepSeek/Anthropic via Claude CLI)
 │   │   ├── anthropic.go            # Claude CLI subprocess provider
 │   │   └── cache.go                # local response cache on disk
 │   ├── steps/                      # 7 built-in steps + registry

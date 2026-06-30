@@ -52,6 +52,24 @@ func TestCreateTaskNeedsInput(t *testing.T) {
 	}
 }
 
+func TestParsePRCreateOutputURL(t *testing.T) {
+	out := "https://github.com/bavocado/tomato/pull/42\n"
+	result := parsePRCreateOutput(out)
+	if result["url"] != "https://github.com/bavocado/tomato/pull/42" {
+		t.Errorf("expected URL parsed, got %q", result["url"])
+	}
+	if result["pr_ref"] != "42" {
+		t.Errorf("expected PR ref 42, got %q", result["pr_ref"])
+	}
+}
+
+func TestParsePRCreateOutputEmpty(t *testing.T) {
+	result := parsePRCreateOutput("")
+	if result["url"] != "" || result["pr_ref"] != "" {
+		t.Errorf("expected empty fields, got %#v", result)
+	}
+}
+
 func TestUpdateStatusOutput(t *testing.T) {
 	input := `{"task_ref": "GH-123", "status": "in-progress"}`
 	var m map[string]interface{}

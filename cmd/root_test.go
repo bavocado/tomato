@@ -21,6 +21,23 @@ func TestHelpOutput(t *testing.T) {
 	}
 }
 
+func TestRunFromFlagInHelp(t *testing.T) {
+	buf := new(bytes.Buffer)
+	rootCmd := NewRootCmd("0.1.0")
+	rootCmd.SetOut(buf)
+	rootCmd.SetArgs([]string{"run", "--help"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "--from") {
+		t.Errorf("run --help missing --from flag: %s", output)
+	}
+	if !strings.Contains(output, "start workflow from the named step") {
+		t.Errorf("run --help missing --from description: %s", output)
+	}
+}
+
 func TestVersionFlag(t *testing.T) {
 	buf := new(bytes.Buffer)
 	rootCmd := NewRootCmd("0.1.0")

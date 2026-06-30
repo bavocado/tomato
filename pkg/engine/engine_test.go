@@ -311,6 +311,47 @@ func TestAskOnFailNonInteractiveAborts(t *testing.T) {
 	}
 }
 
+func TestRunOptionsFromSkipsEarlierSteps(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `
+workflows:
+  default:
+    steps: [spec, design, impl]
+`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	steps := eng.planSteps("default", RunOptions{From: "design"})
+	if len(steps) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(steps))
+	}
+	if steps[0].Name != "design" || steps[1].Name != "impl" {
+		t.Fatalf("unexpected planned steps: %#v", steps)
+	}
+}
+
+func TestRunOptionsFromUnknownStep(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `workflows: { default: { steps: [spec, design] } }`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = eng.planStepsChecked("default", RunOptions{From: "missing"})
+	if err == nil {
+		t.Fatal("expected unknown --from step error")
+	}
+}
+
 func TestEngineCustomBudgetInConfig(t *testing.T) {
 	dir := t.TempDir()
 

@@ -104,23 +104,55 @@ func (e *Engine) GetSteps(name string) []string {
 	return names
 }
 
+// RunOptions controls workflow execution.
+type RunOptions struct {
+	From   string
+	Resume bool
+	Force  bool
+}
+
 // Run executes a named workflow step by step.
 func (e *Engine) Run(workflowName string) error {
+	return e.RunWithOptions(workflowName, RunOptions{})
+}
+
+func (e *Engine) planSteps(workflowName string, opts RunOptions) []config.WorkflowStep {
+	steps, _ := e.planStepsChecked(workflowName, opts)
+	return steps
+}
+
+func (e *Engine) planStepsChecked(workflowName string, opts RunOptions) ([]config.WorkflowStep, error) {
 	wf, ok := e.Workflows[workflowName]
 	if !ok {
-		return fmt.Errorf("workflow %q not found", workflowName)
+		return nil, fmt.Errorf("workflow %q not found", workflowName)
+	}
+	if opts.From == "" {
+		return wf.Steps, nil
+	}
+	for i, s := range wf.Steps {
+		if s.Name == opts.From {
+			return wf.Steps[i:], nil
+		}
+	}
+	return nil, fmt.Errorf("--from step %q not found in workflow %q", opts.From, workflowName)
+}
+
+func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
+	stepsToRun, err := e.planStepsChecked(workflowName, opts)
+	if err != nil {
+		return err
 	}
 
-	for i, stepCfg := range wf.Steps {
+	for i, stepCfg := range stepsToRun {
 		if stepCfg.IsMetaStep && stepCfg.Name == "review_loop" {
-			fmt.Printf("▶ [%d/%d] review_loop (max_rounds=%d)\n", i+1, len(wf.Steps), stepCfg.MaxRounds)
+			fmt.Printf("▶ [%d/%d] review_loop (max_rounds=%d)\n", i+1, len(stepsToRun), stepCfg.MaxRounds)
 			if err := e.runReviewLoop(stepCfg); err != nil {
 				return err
 			}
 			continue
 		}
 
-		fmt.Printf("▶ [%d/%d] %s\n", i+1, len(wf.Steps), stepCfg.Name)
+		fmt.Printf("▶ [%d/%d] %s\n", i+1, len(stepsToRun), stepCfg.Name)
 		stepFn, err := steps.Get(stepCfg.Name)
 		if err != nil {
 			return fmt.Errorf("step %d (%s): %w", i, stepCfg.Name, err)

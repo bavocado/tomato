@@ -78,11 +78,12 @@ func TestNewProvider(t *testing.T) {
 	tests := []struct {
 		modelID string
 		wantErr bool
+		wantType string
 	}{
-		{"openai/gpt-5", false},
-		{"glm/glm-5.2", false},
-		{"deepseek/deepseek-4pro", false},
-		{"invalid", true},
+		{"openai/gpt-5", false, "openai"},
+		{"glm/glm-5.2", false, "claude-cli"},
+		{"deepseek/deepseek-4pro", false, "claude-cli"},
+		{"invalid", true, ""},
 	}
 
 	for _, tt := range tests {
@@ -102,6 +103,37 @@ func TestNewProvider(t *testing.T) {
 		if p.Model() != strings.SplitN(tt.modelID, "/", 2)[1] {
 			t.Errorf("expected model %s, got %s", strings.SplitN(tt.modelID, "/", 2)[1], p.Model())
 		}
+		if tt.wantType == "claude-cli" {
+			if _, ok := p.(*ClaudeCLIProvider); !ok {
+				t.Errorf("expected %s to use ClaudeCLIProvider, got %T", tt.modelID, p)
+			}
+		}
+	}
+}
+
+func TestNewProviderUsesProviderConfigForClaudeCLI(t *testing.T) {
+	p, err := NewProvider(ProviderConfig{
+		ModelID:   "glm/glm-5.2",
+		BaseURL:   "https://glm.example.com",
+		AuthToken: "glm-token",
+		Model:     "glm-5.2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cli, ok := p.(*ClaudeCLIProvider)
+	if !ok {
+		t.Fatalf("expected ClaudeCLIProvider, got %T", p)
+	}
+	if cli.BaseURL != "https://glm.example.com" {
+		t.Errorf("expected base url from config, got %s", cli.BaseURL)
+	}
+	if cli.AuthToken != "glm-token" {
+		t.Errorf("expected auth token from config")
+	}
+	if cli.ModelName != "glm-5.2" {
+		t.Errorf("expected model glm-5.2, got %s", cli.ModelName)
 	}
 }
 

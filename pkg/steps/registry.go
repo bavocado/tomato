@@ -62,11 +62,11 @@ func NewLLMStream(cfg *StepConfig) runner.LLMFunc {
 			llmMessages[i] = llm.Message{Role: m.Role, Content: m.Content}
 		}
 		provider, err := llm.NewProvider(llm.ProviderConfig{
-			ModelID:        cfg.ModelName,
-			APIKey:         cfg.APIKey,
-			AnthropicURL:   cfg.AnthropicURL,
-			AnthropicKey:   cfg.AnthropicKey,
-			AnthropicModel: cfg.AnthropicModel,
+			ModelID:   cfg.ModelName,
+			APIKey:    cfg.APIKey,
+			BaseURL:   cfg.AnthropicURL,
+			AuthToken: cfg.AnthropicKey,
+			Model:     cfg.AnthropicModel,
 		})
 		if err != nil {
 			return err

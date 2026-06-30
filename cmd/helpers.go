@@ -62,18 +62,20 @@ func withFeatureAndModel(fn func(*steps.StepConfig, []string) error) func(*cobra
 			cfg.Budget.DegradeTo,
 		)
 
-		stepCfg := &steps.StepConfig{
-			RepoDir:        dir,
-			FeatureDir:     steps.FeatureDir(dir, feature),
-			Feature:        feature,
-			ModelName:      modelID,
-			APIKey:         apiKey,
-			Adapters:       engine.BuildRegistry(cfg),
-			AnthropicURL:   cfg.Anthropic.ResolvedBaseURL(),
-			AnthropicKey:   cfg.Anthropic.ResolvedAuthToken(),
-			AnthropicModel: cfg.Anthropic.ResolvedModel(),
-			BudgetTracker:  tracker,
-		}
+			providerCfg := cfg.ResolveProviderConfig(modelID)
+
+			stepCfg := &steps.StepConfig{
+				RepoDir:        dir,
+				FeatureDir:     steps.FeatureDir(dir, feature),
+				Feature:        feature,
+				ModelName:      modelID,
+				APIKey:         apiKey,
+				Adapters:       engine.BuildRegistry(cfg),
+				AnthropicURL:   resolveProviderBaseURL(providerCfg),
+				AnthropicKey:   resolveProviderAuthToken(providerCfg),
+				AnthropicModel: resolveProviderModel(providerCfg),
+				BudgetTracker:  tracker,
+			}
 		stepCfg.LLMStream = steps.NewLLMStream(stepCfg)
 
 		return fn(stepCfg, args)
@@ -94,6 +96,18 @@ func extractProvider(modelID string) string {
 		}
 	}
 	return "openai"
+}
+
+func resolveProviderBaseURL(p config.ProviderConnectionConfig) string {
+	return p.ResolvedBaseURL()
+}
+
+func resolveProviderAuthToken(p config.ProviderConnectionConfig) string {
+	return p.ResolvedAuthToken()
+}
+
+func resolveProviderModel(p config.ProviderConnectionConfig) string {
+	return p.ResolvedModel()
 }
 
 func runStepWithName(name string, cfg *steps.StepConfig) *model.StepResult {

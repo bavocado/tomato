@@ -96,8 +96,9 @@ func (p *OpenAIProvider) Stream(messages []Message, onChunk func(string)) error 
 }
 
 // NewProvider creates a Provider from a ProviderConfig.
-// "anthropic/*" models use the `claude` CLI tool (fork/exec).
-// Other models use the OpenAI-compatible HTTP protocol.
+// GLM/DeepSeek/Anthropic models are executed via the `claude` CLI tool with
+// ANTHROPIC_* environment variables set from tomato.yaml provider config.
+// OpenAI-compatible HTTP is retained as a fallback for openai/* and custom providers.
 func NewProvider(cfg ProviderConfig) (Provider, error) {
 	parts := strings.SplitN(cfg.ModelID, "/", 2)
 	if len(parts) != 2 {
@@ -105,19 +106,30 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 	}
 
 	providerName := parts[0]
+	modelName := parts[1]
 
-	// Anthropic uses the `claude` CLI tool
-	if providerName == "anthropic" {
-		return NewClaudeCLIProvider(cfg.ModelID, cfg.AnthropicURL, cfg.AnthropicKey, cfg.AnthropicModel)
+	baseURL := firstNonEmpty(cfg.BaseURL, cfg.AnthropicURL)
+	authToken := firstNonEmpty(cfg.AuthToken, cfg.AnthropicKey)
+	claudeModel := firstNonEmpty(cfg.Model, cfg.AnthropicModel, modelName)
+
+	if providerName == "anthropic" || providerName == "glm" || providerName == "deepseek" || baseURL != "" || authToken != "" {
+		return NewClaudeCLIProvider(cfg.ModelID, baseURL, authToken, claudeModel)
 	}
 
-	modelName := parts[1]
-	baseURL := defaultBaseURL(providerName)
 	return &OpenAIProvider{
-		BaseURL:   baseURL,
+		BaseURL:   defaultBaseURL(providerName),
 		APIKey:    cfg.APIKey,
 		modelName: modelName,
 	}, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // baseURLs maps provider names to their API endpoints.

@@ -55,6 +55,20 @@ func TestRunResumeFlagInHelp(t *testing.T) {
 	}
 }
 
+func TestHistoryDiffSubcommandInHelp(t *testing.T) {
+	buf := new(bytes.Buffer)
+	rootCmd := NewRootCmd("0.1.0")
+	rootCmd.SetOut(buf)
+	rootCmd.SetArgs([]string{"history", "--help"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "diff") {
+		t.Errorf("history --help missing diff subcommand: %s", output)
+	}
+}
+
 func TestVersionFlag(t *testing.T) {
 	buf := new(bytes.Buffer)
 	rootCmd := NewRootCmd("0.1.0")

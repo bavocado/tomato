@@ -375,3 +375,49 @@ func TestBudgetDegradeProceeds(t *testing.T) {
 		t.Error("degrade should still invoke the LLM in v1")
 	}
 }
+
+// TestExecuteSnapshotsArtifacts verifies Execute writes a stable copy of each
+// output artifact into .tomato/runs/<run-id>/artifacts/<basename> so that
+// `tomato history diff` can compare two runs even after the working-tree
+// outputs change.
+func TestExecuteSnapshotsArtifacts(t *testing.T) {
+	dir := t.TempDir()
+
+	mockLLM := func(messages []Message, onChunk func(string)) error {
+		onChunk("artifact snapshot content")
+		return nil
+	}
+
+	result := Execute(
+		"spec",
+		"test",
+		nil,
+		[]string{filepath.Join(dir, "out.md")},
+		dir,
+		"gpt-5",
+		mockLLM,
+		"v1",
+		nil,
+	)
+	if !result.Success {
+		t.Fatalf("step failed: %s", result.Error)
+	}
+
+	// The snapshot lives under .tomato/runs/<run-id>/artifacts/out.md. The
+	// run-id is generated, so resolve it by glob rather than guessing.
+	matches, err := filepath.Glob(filepath.Join(dir, ".tomato", "runs", "*", "artifacts", "out.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly 1 snapshot, got %d: %v", len(matches), matches)
+	}
+
+	snapshot, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(snapshot) != "artifact snapshot content" {
+		t.Errorf("expected snapshot to mirror the output, got %q", string(snapshot))
+	}
+}

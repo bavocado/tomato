@@ -283,7 +283,7 @@ func NewTaskCmd() *cobra.Command {
 }
 
 func NewHistoryCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "history [run-id]",
 		Short: "List past runs or show one run",
 		Args:  cobra.MaximumNArgs(1),
@@ -314,6 +314,25 @@ func NewHistoryCmd() *cobra.Command {
 						r.RunID, r.StepName, r.ModelUsed, r.TokensIn+r.TokensOut, status, cache)
 				}
 			}
+			return nil
+		},
+	}
+	cmd.AddCommand(newHistoryDiffCmd())
+	return cmd
+}
+
+func newHistoryDiffCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "diff <run-a> <run-b> <artifact>",
+		Short: "Diff an artifact between two runs",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir, _ := os.Getwd()
+			out, err := history.Diff(dir, args[0], args[1], args[2])
+			if err != nil {
+				return err
+			}
+			fmt.Print(out)
 			return nil
 		},
 	}

@@ -5,6 +5,7 @@ REPO="bavocado/tomato"
 INSTALL_DIR="${INSTALL_DIR:-}"
 VERSION="${VERSION:-latest}"
 INSTALL_ADAPTER="${INSTALL_ADAPTER:-1}"
+UPDATE_SHELL_PROFILE="${UPDATE_SHELL_PROFILE:-1}"
 
 info() { printf '\033[1;34m[info]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
@@ -73,12 +74,21 @@ download_asset() {
   local url="https://github.com/${REPO}/releases/download/${tag}/${asset}"
   info "Downloading $url"
 
+  # Prefer gh for private repositories because raw release asset URLs require auth.
+  if command -v gh >/dev/null 2>&1; then
+    gh release download "$tag" --repo "$REPO" --pattern "$asset" --dir "$(dirname "$out")" --clobber
+    if [ -f "$(dirname "$out")/$asset" ] && [ "$(dirname "$out")/$asset" != "$out" ]; then
+      mv "$(dirname "$out")/$asset" "$out"
+    fi
+    return
+  fi
+
   if command -v curl >/dev/null 2>&1; then
     curl -fL "$url" -o "$out"
   elif command -v wget >/dev/null 2>&1; then
     wget -O "$out" "$url"
   else
-    err "Need curl or wget to download release assets"
+    err "Need gh, curl, or wget to download release assets"
     exit 1
   fi
 }
@@ -108,6 +118,65 @@ install_binary() {
   install -m 0755 "$binary" "$install_dir/$(basename "$binary" | sed 's/_darwin_arm64$//;s/_darwin_amd64$//;s/_linux_arm64$//;s/_linux_amd64$//')"
 }
 
+shell_profile() {
+  case "${SHELL:-}" in
+    */zsh)  echo "$HOME/.zshrc" ;;
+    */bash) echo "$HOME/.bashrc" ;;
+    *)
+      if [ -f "$HOME/.zshrc" ]; then
+        echo "$HOME/.zshrc"
+      else
+        echo "$HOME/.profile"
+      fi
+      ;;
+  esac
+}
+
+ensure_shell_profile() {
+  local install_dir="$1"
+  local adapter_path="$2"
+
+  if [ "$UPDATE_SHELL_PROFILE" != "1" ]; then
+    warn "Skipping shell profile update (UPDATE_SHELL_PROFILE=$UPDATE_SHELL_PROFILE)"
+    return
+  fi
+
+  local profile
+  profile="$(shell_profile)"
+  touch "$profile"
+
+  local begin="# >>> tomato >>>"
+  local end="# <<< tomato <<<"
+  local block
+  block="${begin}
+# Added by tomato installer
+export PATH=\"${install_dir}:\$PATH\""
+
+  if [ "$INSTALL_ADAPTER" = "1" ]; then
+    block="${block}
+export TOMATO_ADAPTER_BIN=\"${adapter_path}\""
+  fi
+  block="${block}
+${end}"
+
+  if grep -qF "$begin" "$profile"; then
+    # Replace existing tomato-managed block in an idempotent way.
+    awk -v begin="$begin" -v end="$end" -v block="$block" '
+      $0 == begin { print block; in_block=1; next }
+      $0 == end { in_block=0; next }
+      !in_block { print }
+    ' "$profile" > "$profile.tmp"
+    mv "$profile.tmp" "$profile"
+  else
+    {
+      printf '\n%s\n' "$block"
+    } >> "$profile"
+  fi
+
+  info "Updated shell profile: $profile"
+  info "Run: source $profile"
+}
+
 main() {
   local os arch ext tag install_dir tmpdir tomato_asset adapter_asset
 
@@ -128,8 +197,8 @@ main() {
   fi
 
   install_dir="$(pick_install_dir)"
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  TMPDIR_TOMATO_INSTALL="$(mktemp -d)"
+  trap 'rm -rf "${TMPDIR_TOMATO_INSTALL:-}"' EXIT
 
   tomato_asset="tomato_${os}_${arch}.${ext}"
   adapter_asset="github-tomato-adapter_${os}_${arch}.${ext}"
@@ -137,14 +206,14 @@ main() {
   info "Installing tomato $tag for ${os}/${arch}"
   info "Install directory: $install_dir"
 
-  download_asset "$tag" "$tomato_asset" "$tmpdir/$tomato_asset"
-  extract_archive "$tmpdir/$tomato_asset" "$tmpdir"
-  install_binary "$tmpdir/tomato_${os}_${arch}" "$install_dir"
+  download_asset "$tag" "$tomato_asset" "$TMPDIR_TOMATO_INSTALL/$tomato_asset"
+  extract_archive "$TMPDIR_TOMATO_INSTALL/$tomato_asset" "$TMPDIR_TOMATO_INSTALL"
+  install_binary "$TMPDIR_TOMATO_INSTALL/tomato_${os}_${arch}" "$install_dir"
 
   if [ "$INSTALL_ADAPTER" = "1" ]; then
-    download_asset "$tag" "$adapter_asset" "$tmpdir/$adapter_asset"
-    extract_archive "$tmpdir/$adapter_asset" "$tmpdir"
-    install_binary "$tmpdir/github-tomato-adapter_${os}_${arch}" "$install_dir"
+    download_asset "$tag" "$adapter_asset" "$TMPDIR_TOMATO_INSTALL/$adapter_asset"
+    extract_archive "$TMPDIR_TOMATO_INSTALL/$adapter_asset" "$TMPDIR_TOMATO_INSTALL"
+    install_binary "$TMPDIR_TOMATO_INSTALL/github-tomato-adapter_${os}_${arch}" "$install_dir"
   fi
 
   info "Installed: $(command -v tomato || echo "$install_dir/tomato")"
@@ -157,6 +226,8 @@ main() {
   if [ "$INSTALL_ADAPTER" = "1" ]; then
     info "Installed adapter: $install_dir/github-tomato-adapter"
   fi
+
+  ensure_shell_profile "$install_dir" "$install_dir/github-tomato-adapter"
 }
 
 main "$@"

@@ -65,6 +65,15 @@ This installs:
 
 - `tomato`
 - `github-tomato-adapter`
+- shell profile entries for:
+  - `PATH`
+  - `TOMATO_ADAPTER_BIN`
+
+After installation, restart your shell or run the command printed by the installer, for example:
+
+```bash
+source ~/.zshrc
+```
 
 Supported targets:
 
@@ -84,6 +93,9 @@ INSTALL_DIR=$HOME/bin curl -fsSL https://raw.githubusercontent.com/bavocado/toma
 
 # Skip GitHub adapter
 INSTALL_ADAPTER=0 curl -fsSL https://raw.githubusercontent.com/bavocado/tomato/main/install.sh | bash
+
+# Do not modify shell profile
+UPDATE_SHELL_PROFILE=0 curl -fsSL https://raw.githubusercontent.com/bavocado/tomato/main/install.sh | bash
 ```
 
 #### Go install

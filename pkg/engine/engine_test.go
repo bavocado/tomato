@@ -9,6 +9,8 @@ import (
 
 	"github.com/bavocado/tomato/pkg/adapter"
 	"github.com/bavocado/tomato/pkg/config"
+	"github.com/bavocado/tomato/pkg/model"
+	"github.com/bavocado/tomato/pkg/state"
 	"github.com/bavocado/tomato/pkg/steps"
 )
 
@@ -352,6 +354,78 @@ func TestRunOptionsFromUnknownStep(t *testing.T) {
 	}
 }
 
+func TestRunOptionsResumeStartsAtFailedStep(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `workflows: { default: { steps: [spec, design, impl, test] } }`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := state.Save(dir, state.WorkflowState{
+		Workflow:       "default",
+		Feature:        eng.Feature,
+		FailedStep:     "impl",
+		CompletedSteps: []string{"spec", "design"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	planned, err := eng.planStepsChecked("default", RunOptions{Resume: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planned) != 2 || planned[0].Name != "impl" || planned[1].Name != "test" {
+		t.Fatalf("expected [impl, test], got %#v", planned)
+	}
+}
+
+func TestRunOptionsResumeNoFailedStepErrors(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `workflows: { default: { steps: [spec, design] } }`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// State exists but records no failed step — nothing to resume from.
+	if err := state.Save(dir, state.WorkflowState{
+		Workflow:       "default",
+		Feature:        eng.Feature,
+		CompletedSteps: []string{"spec", "design"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = eng.planStepsChecked("default", RunOptions{Resume: true})
+	if err == nil {
+		t.Fatal("expected error when resuming with no failed step recorded")
+	}
+}
+
+func TestRunOptionsFromAndResumeMutuallyExclusive(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `workflows: { default: { steps: [spec, design] } }`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = eng.planStepsChecked("default", RunOptions{From: "design", Resume: true})
+	if err == nil {
+		t.Fatal("expected error when --from and --resume are used together")
+	}
+}
+
 func TestEngineCustomBudgetInConfig(t *testing.T) {
 	dir := t.TempDir()
 
@@ -384,5 +458,87 @@ workflows:
 	}
 	if eng.Config.Budget.OnExceed != "fail" {
 		t.Errorf("expected on_exceed 'fail', got '%s'", eng.Config.Budget.OnExceed)
+	}
+}
+
+// fakeStep returns a StepFunc that always yields the given result. Registered
+// under names not used by any real step (alpha/beta/gamma) so it never clashes
+// with the built-in registry.
+func fakeStep(result *model.StepResult) steps.StepFunc {
+	return func(*steps.StepConfig, []string) *model.StepResult {
+		return result
+	}
+}
+
+func TestRunWithOptionsPersistsStateOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `workflows: { default: { steps: [alpha, beta, gamma] } }`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	steps.Register("alpha", fakeStep(&model.StepResult{StepName: "alpha", Success: true, RunID: "r-alpha"}))
+	steps.Register("beta", fakeStep(&model.StepResult{StepName: "beta", Success: false, Error: "boom"}))
+	gammaRan := false
+	steps.Register("gamma", func(*steps.StepConfig, []string) *model.StepResult {
+		gammaRan = true
+		return &model.StepResult{StepName: "gamma", Success: true}
+	})
+
+	err = eng.RunWithOptions("default", RunOptions{})
+	if err == nil {
+		t.Fatal("expected workflow to fail when beta fails")
+	}
+	if gammaRan {
+		t.Error("gamma should not run after beta fails")
+	}
+
+	st, err := state.Load(dir, "default", eng.Feature)
+	if err != nil {
+		t.Fatalf("expected state persisted on failure: %v", err)
+	}
+	if st.FailedStep != "beta" {
+		t.Errorf("expected FailedStep=beta, got %q", st.FailedStep)
+	}
+	if len(st.CompletedSteps) != 1 || st.CompletedSteps[0] != "alpha" {
+		t.Errorf("expected CompletedSteps=[alpha], got %#v", st.CompletedSteps)
+	}
+}
+
+func TestRunWithOptionsClearsStateOnCompletion(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `workflows: { default: { steps: [alpha, beta] } }`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-existing state from a prior failed run must be cleared once the
+	// workflow completes successfully — otherwise a later --resume would
+	// re-run from a stale failed step.
+	if err := state.Save(dir, state.WorkflowState{
+		Workflow:   "default",
+		Feature:    eng.Feature,
+		FailedStep: "alpha",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	steps.Register("alpha", fakeStep(&model.StepResult{StepName: "alpha", Success: true, RunID: "r-alpha"}))
+	steps.Register("beta", fakeStep(&model.StepResult{StepName: "beta", Success: true, RunID: "r-beta"}))
+
+	if err := eng.RunWithOptions("default", RunOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := state.Load(dir, "default", eng.Feature); err == nil {
+		t.Fatal("expected state to be cleared after successful completion")
 	}
 }

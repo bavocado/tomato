@@ -119,11 +119,12 @@ func NewRunCmd() *cobra.Command {
 			flagFeature, _ := cmd.Flags().GetString("feature")
 			eng.Feature = steps.ResolveFeature(flagFeature, eng.Config.Feature, dir)
 			from, _ := cmd.Flags().GetString("from")
+			resume, _ := cmd.Flags().GetBool("resume")
 			workflowName := "default"
 			if len(args) > 0 {
 				workflowName = args[0]
 			}
-			if err := eng.RunWithOptions(workflowName, engine.RunOptions{From: from}); err != nil {
+			if err := eng.RunWithOptions(workflowName, engine.RunOptions{From: from, Resume: resume}); err != nil {
 				fmt.Fprintf(os.Stderr, "✗ workflow %q failed: %v\n", workflowName, err)
 				os.Exit(1)
 			}
@@ -133,6 +134,7 @@ func NewRunCmd() *cobra.Command {
 	}
 	addFeatureFlag(cmd)
 	cmd.Flags().String("from", "", "start workflow from the named step")
+	cmd.Flags().Bool("resume", false, "resume from the last failed step")
 	return cmd
 }
 

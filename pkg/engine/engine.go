@@ -10,6 +10,7 @@ import (
 	"github.com/bavocado/tomato/pkg/archive"
 	"github.com/bavocado/tomato/pkg/budget"
 	"github.com/bavocado/tomato/pkg/config"
+	"github.com/bavocado/tomato/pkg/state"
 	"github.com/bavocado/tomato/pkg/steps"
 )
 
@@ -122,9 +123,22 @@ func (e *Engine) planSteps(workflowName string, opts RunOptions) []config.Workfl
 }
 
 func (e *Engine) planStepsChecked(workflowName string, opts RunOptions) ([]config.WorkflowStep, error) {
+	if opts.From != "" && opts.Resume {
+		return nil, fmt.Errorf("--from and --resume cannot be used together")
+	}
 	wf, ok := e.Workflows[workflowName]
 	if !ok {
 		return nil, fmt.Errorf("workflow %q not found", workflowName)
+	}
+	if opts.Resume {
+		s, err := state.Load(e.RepoDir, workflowName, e.Feature)
+		if err != nil {
+			return nil, fmt.Errorf("--resume: %w", err)
+		}
+		if s.FailedStep == "" {
+			return nil, fmt.Errorf("no failed step recorded for workflow %q feature %q; nothing to resume", workflowName, e.Feature)
+		}
+		opts.From = s.FailedStep
 	}
 	if opts.From == "" {
 		return wf.Steps, nil
@@ -142,6 +156,10 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 	if err != nil {
 		return err
 	}
+
+	// completed tracks finished step names so a mid-workflow failure can
+	// persist resumable state (design §3.2, Task 3).
+	completed := make([]string, 0, len(stepsToRun))
 
 	for i, stepCfg := range stepsToRun {
 		if stepCfg.IsMetaStep && stepCfg.Name == "review_loop" {
@@ -164,9 +182,30 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 		result := stepFn(stepConfig, nil)
 		if !result.Success {
 			fmt.Printf("✗ %s failed: %s\n", stepCfg.Name, result.Error)
+			if saveErr := state.Save(e.RepoDir, state.WorkflowState{
+				Workflow:       workflowName,
+				Feature:        e.Feature,
+				CurrentStep:    stepCfg.Name,
+				FailedStep:     stepCfg.Name,
+				CompletedSteps: completed,
+				LastRunID:      result.RunID,
+			}); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "⚠  warning: failed to persist resume state: %v\n", saveErr)
+			}
 			return fmt.Errorf("step %q failed: %s", stepCfg.Name, result.Error)
 		}
 		fmt.Printf("✓ %s completed (run: %s)\n", stepCfg.Name, result.RunID)
+
+		completed = append(completed, stepCfg.Name)
+		if saveErr := state.Save(e.RepoDir, state.WorkflowState{
+			Workflow:       workflowName,
+			Feature:        e.Feature,
+			CurrentStep:    stepCfg.Name,
+			CompletedSteps: completed,
+			LastRunID:      result.RunID,
+		}); saveErr != nil {
+			fmt.Fprintf(os.Stderr, "⚠  warning: failed to persist resume state: %v\n", saveErr)
+		}
 
 		// Post-hook: after impl, archive the design trio to v<N>/ and rewrite
 		// architecture.md to reflect the real, as-implemented architecture
@@ -195,7 +234,9 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 		}
 	}
 
-	return nil
+	// All steps succeeded — clear any prior resume state so a subsequent
+	// --resume does not re-run from a stale failed step.
+	return state.Clear(e.RepoDir, workflowName, e.Feature)
 }
 
 // stepStatus maps a completed step to its external status label (design §2.1).

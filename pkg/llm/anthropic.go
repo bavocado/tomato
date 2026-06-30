@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // ClaudeCLIProvider runs the `claude` CLI tool to execute AI tasks.
@@ -22,10 +24,28 @@ type ClaudeCLIProvider struct {
 	BaseURL     string
 	AuthToken   string
 	ClaudeModel string
+	CLIPath     string
+	Timeout     time.Duration
 }
 
 func (p *ClaudeCLIProvider) Model() string {
 	return p.ModelName
+}
+
+func (p *ClaudeCLIProvider) effectiveTimeout() time.Duration {
+	if p.Timeout > 0 {
+		return p.Timeout
+	}
+	return claudeTimeout()
+}
+
+func claudeTimeout() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("TOMATO_CLAUDE_TIMEOUT")); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Minute
 }
 
 func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) error {
@@ -40,8 +60,13 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 		args = append(args, "--model", p.ModelName)
 	}
 
-	cmd := exec.Command("claude", args...)
+	cliPath := p.CLIPath
+	if cliPath == "" {
+		cliPath = "claude"
+	}
+	cmd := exec.Command(cliPath, args...)
 	cmd.Stdin = strings.NewReader(prompt)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	// Forward env from parent, then override with yaml config values
 	env := os.Environ()
@@ -68,30 +93,50 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 		return fmt.Errorf("starting claude: %w", err)
 	}
 
-	// Stream stdout in chunks to onChunk for progressive output
-	const chunkSize = 120
-	reader := bufio.NewReader(stdout)
-	buf := make([]byte, chunkSize)
-	for {
-		n, err := reader.Read(buf)
-		if n > 0 {
-			onChunk(string(buf[:n]))
-		}
-		if err != nil {
-			break
-		}
-	}
+	fmt.Fprintf(os.Stderr, "[claude] command=%s %s timeout=%s\n", cliPath, strings.Join(args, " "), p.effectiveTimeout())
 
-	waitErr := cmd.Wait()
-	if waitErr != nil {
-		stderrStr := strings.TrimSpace(stderrBuf.String())
-		if stderrStr != "" {
-			return fmt.Errorf("claude exited with error: %s", stderrStr)
+	// Stream stdout in chunks to onChunk for progressive output.
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		const chunkSize = 120
+		reader := bufio.NewReader(stdout)
+		buf := make([]byte, chunkSize)
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				onChunk(string(buf[:n]))
+			}
+			if err != nil {
+				break
+			}
 		}
-		return fmt.Errorf("claude exited: %w", waitErr)
-	}
+	}()
 
-	return nil
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- cmd.Wait()
+	}()
+
+	select {
+	case waitErr := <-waitDone:
+		<-readDone
+		if waitErr != nil {
+			stderrStr := strings.TrimSpace(stderrBuf.String())
+			if stderrStr != "" {
+				return fmt.Errorf("claude exited with error: %s", stderrStr)
+			}
+			return fmt.Errorf("claude exited: %w", waitErr)
+		}
+		return nil
+	case <-time.After(p.effectiveTimeout()):
+		// Kill the whole process group so child commands spawned by Claude (e.g.
+		// make/go build) don't survive the timeout.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-waitDone
+		<-readDone
+		return fmt.Errorf("claude timed out after %s", p.effectiveTimeout())
+	}
 }
 
 // buildClaudePrompt concatenates messages into a single prompt text.
@@ -137,5 +182,7 @@ func NewClaudeCLIProvider(modelID, baseURL, authToken, claudeModel string) (*Cla
 		BaseURL:     baseURL,
 		AuthToken:   authToken,
 		ClaudeModel: claudeModel,
+		CLIPath:     "claude",
+		Timeout:     claudeTimeout(),
 	}, nil
 }

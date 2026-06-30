@@ -2,6 +2,7 @@ package engine
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -604,5 +605,94 @@ func TestRunWithOptionsUnknownStepStillErrors(t *testing.T) {
 	err = eng.RunWithOptions("default", RunOptions{})
 	if err == nil {
 		t.Fatal("expected error for step that is neither built-in nor custom")
+	}
+}
+
+// initGitRepoForEngine creates a git repo in dir with one initial commit so
+// HEAD resolves and branch operations work. Mirrors the production layout.
+func initGitRepoForEngine(t *testing.T, dir string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "t@t.com"},
+		{"config", "user.name", "T"},
+		{"checkout", "-b", "main"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %s", strings.Join(args, " "), string(out))
+		}
+	}
+	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".tomato/\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0644)
+	for _, args := range [][]string{{"add", "."}, {"commit", "-m", "init"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %s", strings.Join(args, " "), string(out))
+		}
+	}
+}
+
+// TestRunWithOptionsCommitsFeatureArtifacts verifies that after a step writes
+// artifacts under docs/specs/<feature>/, those artifacts are committed to git
+// (only the feature dir, not unrelated working-tree changes). The .tomato/
+// runtime dir must NOT be committed.
+func TestRunWithOptionsCommitsFeatureArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepoForEngine(t, dir)
+
+	yamlContent := `
+workflows:
+  default:
+    steps: [alpha]
+`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// alpha writes a docs artifact into the feature dir, plus an unrelated
+	// working-tree file that must NOT be swept into the artifact commit.
+	featureDir := eng.featureDir()
+	steps.Register("alpha", func(cfg *steps.StepConfig, _ []string) *model.StepResult {
+		os.MkdirAll(cfg.FeatureDir, 0755)
+		os.WriteFile(filepath.Join(cfg.FeatureDir, "architecture.md"), []byte("# arch"), 0644)
+		// Unrelated working-tree change — should remain untracked.
+		os.WriteFile(filepath.Join(cfg.RepoDir, "unrelated.txt"), []byte("nope"), 0644)
+		return &model.StepResult{StepName: "alpha", Success: true, RunID: "r-alpha"}
+	})
+
+	if err := eng.RunWithOptions("default", RunOptions{}); err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+
+	archRel, _ := filepath.Rel(dir, filepath.Join(featureDir, "architecture.md"))
+
+	// The docs artifact must be tracked (committed).
+	out, err := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", archRel).CombinedOutput()
+	if err != nil {
+		t.Fatalf("expected docs artifact committed, git says: %s", string(out))
+	}
+
+	// The unrelated file must remain untracked (NOT swept into the commit).
+	if _, err := os.Stat(filepath.Join(dir, "unrelated.txt")); err != nil {
+		t.Fatalf("unrelated file should still exist: %v", err)
+	}
+	tracked, _ := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", "unrelated.txt").Output()
+	if len(tracked) > 0 {
+		t.Errorf("unrelated.txt should NOT be committed, but it is tracked: %q", string(tracked))
+	}
+
+	// .tomato/ must never be committed.
+	tracked, _ = exec.Command("git", "-C", dir, "ls-files", ".tomato/").Output()
+	if strings.TrimSpace(string(tracked)) != "" {
+		t.Errorf(".tomato/ should NOT be committed, but tracked files: %q", string(tracked))
 	}
 }

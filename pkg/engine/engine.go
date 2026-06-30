@@ -201,6 +201,13 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 		}
 		fmt.Printf("✓ %s completed (run: %s)\n", stepCfg.Name, result.RunID)
 
+		// Commit the feature's intermediate artifacts (design docs, reviews,
+		// reports, …) as they are produced, scoped to docs/specs/<feature>/.
+		// Best-effort: a failed commit is a warning, never a step failure.
+		if err := steps.CommitFeatureArtifacts(e.RepoDir, featureDir, e.Feature, stepCfg.Name); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit feature artifacts: %v\n", err)
+		}
+
 		completed = append(completed, stepCfg.Name)
 		if saveErr := state.Save(e.RepoDir, state.WorkflowState{
 			Workflow:       workflowName,
@@ -296,6 +303,10 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 			"pr_ref":   prRef,
 			"comments": string(comments),
 		})
+		// Commit the review comments artifact (reviews/r<N>-comments.md).
+		if err := steps.CommitFeatureArtifacts(e.RepoDir, featureDir, e.Feature, fmt.Sprintf("review-r%d", round)); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit review artifacts: %v\n", err)
+		}
 
 		if !steps.HasBlockingIssues(reviewPath) {
 			fmt.Printf("✓ review_loop converged in round %d\n", round)
@@ -310,6 +321,10 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 			fixResult := implFn(implCfg, nil)
 			if !fixResult.Success {
 				return fmt.Errorf("fix round %d failed: %s", round, fixResult.Error)
+			}
+			// Commit docs artifacts produced/changed by the fix round.
+			if err := steps.CommitFeatureArtifacts(e.RepoDir, featureDir, e.Feature, fmt.Sprintf("fix-r%d", round)); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit fix artifacts: %v\n", err)
 			}
 			e.callAdapter(prBridge, adapter.CmdUpdatePR, map[string]string{
 				"pr_ref": prRef,

@@ -245,3 +245,33 @@ workflows:
 		t.Errorf("expected RunsOn 'local', got %q", cfg.Workflows["default"].Steps[1].RunsOn)
 	}
 }
+
+func TestParseCustomSteps(t *testing.T) {
+	yamlContent := `
+models:
+  default: glm/glm-5.2
+custom_steps:
+  i18n-extract:
+    prompt: prompts/i18n.md
+    inputs: [src/**/*.ts]
+    outputs: [locales/en.json]
+    model: glm/glm-5.2
+workflows:
+  with_i18n:
+    steps: [design, impl, i18n-extract, test]
+`
+	cfg, err := Parse([]byte(yamlContent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs, ok := cfg.CustomSteps["i18n-extract"]
+	if !ok {
+		t.Fatal("expected custom step")
+	}
+	if cs.Prompt != "prompts/i18n.md" || len(cs.Inputs) != 1 || len(cs.Outputs) != 1 {
+		t.Fatalf("custom step parsed wrong: %#v", cs)
+	}
+	if cs.Model != "glm/glm-5.2" {
+		t.Errorf("expected model glm/glm-5.2, got %q", cs.Model)
+	}
+}

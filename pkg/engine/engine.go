@@ -10,6 +10,9 @@ import (
 	"github.com/bavocado/tomato/pkg/archive"
 	"github.com/bavocado/tomato/pkg/budget"
 	"github.com/bavocado/tomato/pkg/config"
+	"github.com/bavocado/tomato/pkg/customstep"
+	"github.com/bavocado/tomato/pkg/model"
+	"github.com/bavocado/tomato/pkg/runner"
 	"github.com/bavocado/tomato/pkg/state"
 	"github.com/bavocado/tomato/pkg/steps"
 )
@@ -22,6 +25,11 @@ type Engine struct {
 	Feature   string
 	Adapters  *adapter.Registry
 	Tracker   *budget.Tracker
+	// LLMStream, when non-nil, overrides the default LLM stream factory for
+	// every step (built-in and custom). Production leaves it nil so each
+	// step binds its provider via steps.NewLLMStream; tests and future
+	// replay/dry-run modes inject a function here.
+	LLMStream runner.LLMFunc
 }
 
 // NewEngine creates an engine by loading tomato.yaml from the given directory.
@@ -171,15 +179,12 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 		}
 
 		fmt.Printf("▶ [%d/%d] %s\n", i+1, len(stepsToRun), stepCfg.Name)
-		stepFn, err := steps.Get(stepCfg.Name)
+		featureDir := e.featureDir()
+		stepConfig := e.stepConfig(featureDir, e.Feature, stepCfg.Name)
+		result, err := e.executeStep(stepCfg.Name, stepConfig)
 		if err != nil {
 			return fmt.Errorf("step %d (%s): %w", i, stepCfg.Name, err)
 		}
-
-			featureDir := e.featureDir()
-			stepConfig := e.stepConfig(featureDir, e.Feature, stepCfg.Name)
-
-		result := stepFn(stepConfig, nil)
 		if !result.Success {
 			fmt.Printf("✗ %s failed: %s\n", stepCfg.Name, result.Error)
 			if saveErr := state.Save(e.RepoDir, state.WorkflowState{
@@ -355,8 +360,32 @@ func (e *Engine) stepConfig(featureDir, feature, stepName string) *steps.StepCon
 		AnthropicModel: provider.ResolvedModel(),
 		BudgetTracker:  e.Tracker,
 	}
-	cfg.LLMStream = steps.NewLLMStream(cfg)
+	if e.LLMStream != nil {
+		cfg.LLMStream = e.LLMStream
+	} else {
+		cfg.LLMStream = steps.NewLLMStream(cfg)
+	}
 	return cfg
+}
+
+// executeStep resolves a workflow step to either a registered built-in step or
+// a user-defined custom step (design §3.3, Task 4). A step that is neither
+// registered nor declared in custom_steps returns the original lookup error so
+// callers surface a clear "unknown step" message.
+func (e *Engine) executeStep(name string, cfg *steps.StepConfig) (*model.StepResult, error) {
+	stepFn, err := steps.Get(name)
+	if err == nil {
+		return stepFn(cfg, nil), nil
+	}
+	if def, ok := e.Config.CustomSteps[name]; ok {
+		return customstep.Run(name, def, customstep.Config{
+			RepoDir:       cfg.RepoDir,
+			ModelName:     cfg.ModelName,
+			LLMStream:     cfg.LLMStream,
+			BudgetTracker: cfg.BudgetTracker,
+		}), nil
+	}
+	return nil, err
 }
 
 // askOnFail implements the on_fail: ask policy. It prompts on an interactive

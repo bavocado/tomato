@@ -10,15 +10,16 @@ import (
 
 // Config is the root of tomato.yaml.
 type Config struct {
-	Feature   string                              `yaml:"feature,omitempty"`
-	Models    ModelsConfig                        `yaml:"models"`
-	Providers map[string]ProviderConnectionConfig `yaml:"providers"`
-	Anthropic AnthropicConfig                     `yaml:"anthropic"` // legacy compatibility
-	Budget    BudgetConfig                        `yaml:"budget"`
-	Impl      ImplConfig                          `yaml:"impl"`
-	Workflows map[string]WorkflowDef              `yaml:"workflows"`
-	Adapters  map[string]AdapterDef               `yaml:"adapters"`
-	Roles     map[string]string                   `yaml:"roles"`
+	Feature     string                              `yaml:"feature,omitempty"`
+	Models      ModelsConfig                        `yaml:"models"`
+	Providers   map[string]ProviderConnectionConfig `yaml:"providers"`
+	Anthropic   AnthropicConfig                     `yaml:"anthropic"` // legacy compatibility
+	Budget      BudgetConfig                        `yaml:"budget"`
+	Impl        ImplConfig                          `yaml:"impl"`
+	Workflows   map[string]WorkflowDef              `yaml:"workflows"`
+	CustomSteps map[string]CustomStepDef            `yaml:"custom_steps"`
+	Adapters    map[string]AdapterDef               `yaml:"adapters"`
+	Roles       map[string]string                   `yaml:"roles"`
 }
 
 // ModelsConfig defines per-step model routing.
@@ -148,6 +149,17 @@ func (s WorkflowStep) MarshalYAML() (interface{}, error) {
 type AdapterDef struct {
 	Bin string            `yaml:"bin"`
 	Env map[string]string `yaml:"env,omitempty"`
+}
+
+// CustomStepDef declares a user-defined workflow step backed by a prompt +
+// file inputs/outputs, executed through the same runner as built-in steps
+// (design §3.3, Task 4). The step name (the map key) is referenced from a
+// workflow's steps list.
+type CustomStepDef struct {
+	Prompt  string   `yaml:"prompt"`
+	Inputs  []string `yaml:"inputs"`
+	Outputs []string `yaml:"outputs"`
+	Model   string   `yaml:"model"`
 }
 
 // UnmarshalYAML handles the step being either a string or a map.

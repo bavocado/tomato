@@ -10,6 +10,7 @@ import (
 	"github.com/bavocado/tomato/pkg/adapter"
 	"github.com/bavocado/tomato/pkg/config"
 	"github.com/bavocado/tomato/pkg/model"
+	"github.com/bavocado/tomato/pkg/runner"
 	"github.com/bavocado/tomato/pkg/state"
 	"github.com/bavocado/tomato/pkg/steps"
 )
@@ -540,5 +541,68 @@ func TestRunWithOptionsClearsStateOnCompletion(t *testing.T) {
 
 	if _, err := state.Load(dir, "default", eng.Feature); err == nil {
 		t.Fatal("expected state to be cleared after successful completion")
+	}
+}
+
+// TestRunWithOptionsDispatchesCustomStep verifies that a workflow step that is
+// not a registered built-in but IS declared in custom_steps is executed via
+// customstep.Run (writing its declared output) rather than erroring as unknown.
+// The LLM stream is injected so no real provider is contacted.
+func TestRunWithOptionsDispatchesCustomStep(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "prompts"), 0755)
+	os.WriteFile(filepath.Join(dir, "prompts", "echo.md"), []byte("say hello"), 0644)
+
+	yamlContent := `
+custom_steps:
+  myecho:
+    prompt: prompts/echo.md
+    outputs: [out/echo.txt]
+workflows:
+  default:
+    steps: [myecho]
+`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng.LLMStream = func(_ []runner.Message, onChunk func(string)) error {
+		onChunk("echo-output")
+		return nil
+	}
+
+	if err := eng.RunWithOptions("default", RunOptions{}); err != nil {
+		t.Fatalf("expected custom step workflow to succeed: %v", err)
+	}
+
+	out, err := os.ReadFile(filepath.Join(dir, "out", "echo.txt"))
+	if err != nil {
+		t.Fatalf("expected custom step output written: %v", err)
+	}
+	if string(out) != "echo-output" {
+		t.Errorf("expected output 'echo-output', got %q", string(out))
+	}
+}
+
+// TestRunWithOptionsUnknownStepStillErrors is a regression guard: a step that
+// is neither a registered built-in nor a custom step must still surface the
+// "unknown step" error rather than silently passing.
+func TestRunWithOptionsUnknownStepStillErrors(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `workflows: { default: { steps: [ghoststep] } }`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = eng.RunWithOptions("default", RunOptions{})
+	if err == nil {
+		t.Fatal("expected error for step that is neither built-in nor custom")
 	}
 }

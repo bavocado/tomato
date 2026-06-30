@@ -40,6 +40,18 @@ func TestStdinParsing(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesDoesNotNeedInput(t *testing.T) {
+	if needsInput("capabilities") {
+		t.Error("capabilities should not read stdin")
+	}
+}
+
+func TestCreateTaskNeedsInput(t *testing.T) {
+	if !needsInput("create-task") {
+		t.Error("create-task should read stdin")
+	}
+}
+
 func TestUpdateStatusOutput(t *testing.T) {
 	input := `{"task_ref": "GH-123", "status": "in-progress"}`
 	var m map[string]interface{}

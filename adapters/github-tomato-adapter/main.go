@@ -17,7 +17,11 @@ func main() {
 	subcommand := os.Args[1]
 
 	var input map[string]interface{}
-	if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil && subcommand != "capabilities" {
+	if needsInput(subcommand) {
+		if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
+			input = map[string]interface{}{}
+		}
+	} else {
 		input = map[string]interface{}{}
 	}
 
@@ -73,6 +77,15 @@ func str(m map[string]interface{}, key string) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return ""
+}
+
+func needsInput(subcommand string) bool {
+	switch subcommand {
+	case "capabilities":
+		return false
+	default:
+		return true
+	}
 }
 
 func runGh(args ...string) (interface{}, error) {

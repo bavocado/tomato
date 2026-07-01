@@ -103,6 +103,10 @@ func Execute(
 	if _, unsplit := artifactParts[""]; unsplit && len(outputFiles) > 1 {
 		fmt.Fprintf(os.Stderr, "⚠  response had no ---TOMATO-ARTIFACT--- markers; writing the full response to all %d output files (expected separate artifacts)\n", len(outputFiles))
 	}
+	// Snapshot dir: a stable copy of each output lives under
+	// .tomato/runs/<run-id>/artifacts/ so `tomato history diff` can compare two
+	// runs even after the working-tree outputs change (design §3.4, Task 5).
+	snapshotDir := filepath.Join(repoDir, ".tomato", "runs", runID, "artifacts")
 	for _, outPath := range outputFiles {
 		fullPath := outPath
 		if !filepath.IsAbs(fullPath) {
@@ -124,6 +128,15 @@ func Execute(
 			return failure(stepName, runID, start, modelName, err)
 		}
 		logStep(stepName, "wrote artifact %s (%d bytes)", fullPath, len(content))
+
+		// Mirror the artifact into the run snapshot dir for history diff.
+		if err := os.MkdirAll(snapshotDir, 0755); err != nil {
+			return failure(stepName, runID, start, modelName, err)
+		}
+		snapshotPath := filepath.Join(snapshotDir, baseName)
+		if err := os.WriteFile(snapshotPath, []byte(content), 0644); err != nil {
+			return failure(stepName, runID, start, modelName, err)
+		}
 	}
 
 	// Write run log

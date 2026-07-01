@@ -118,11 +118,13 @@ func NewRunCmd() *cobra.Command {
 			}
 			flagFeature, _ := cmd.Flags().GetString("feature")
 			eng.Feature = steps.ResolveFeature(flagFeature, eng.Config.Feature, dir)
+			from, _ := cmd.Flags().GetString("from")
+			resume, _ := cmd.Flags().GetBool("resume")
 			workflowName := "default"
 			if len(args) > 0 {
 				workflowName = args[0]
 			}
-			if err := eng.Run(workflowName); err != nil {
+			if err := eng.RunWithOptions(workflowName, engine.RunOptions{From: from, Resume: resume}); err != nil {
 				fmt.Fprintf(os.Stderr, "✗ workflow %q failed: %v\n", workflowName, err)
 				os.Exit(1)
 			}
@@ -131,6 +133,8 @@ func NewRunCmd() *cobra.Command {
 		},
 	}
 	addFeatureFlag(cmd)
+	cmd.Flags().String("from", "", "start workflow from the named step")
+	cmd.Flags().Bool("resume", false, "resume from the last failed step")
 	return cmd
 }
 
@@ -279,7 +283,7 @@ func NewTaskCmd() *cobra.Command {
 }
 
 func NewHistoryCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "history [run-id]",
 		Short: "List past runs or show one run",
 		Args:  cobra.MaximumNArgs(1),
@@ -310,6 +314,25 @@ func NewHistoryCmd() *cobra.Command {
 						r.RunID, r.StepName, r.ModelUsed, r.TokensIn+r.TokensOut, status, cache)
 				}
 			}
+			return nil
+		},
+	}
+	cmd.AddCommand(newHistoryDiffCmd())
+	return cmd
+}
+
+func newHistoryDiffCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "diff <run-a> <run-b> <artifact>",
+		Short: "Diff an artifact between two runs",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir, _ := os.Getwd()
+			out, err := history.Diff(dir, args[0], args[1], args[2])
+			if err != nil {
+				return err
+			}
+			fmt.Print(out)
 			return nil
 		},
 	}

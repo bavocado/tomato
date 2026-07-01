@@ -10,6 +10,10 @@ import (
 	"github.com/bavocado/tomato/pkg/archive"
 	"github.com/bavocado/tomato/pkg/budget"
 	"github.com/bavocado/tomato/pkg/config"
+	"github.com/bavocado/tomato/pkg/customstep"
+	"github.com/bavocado/tomato/pkg/model"
+	"github.com/bavocado/tomato/pkg/runner"
+	"github.com/bavocado/tomato/pkg/state"
 	"github.com/bavocado/tomato/pkg/steps"
 )
 
@@ -21,6 +25,11 @@ type Engine struct {
 	Feature   string
 	Adapters  *adapter.Registry
 	Tracker   *budget.Tracker
+	// LLMStream, when non-nil, overrides the default LLM stream factory for
+	// every step (built-in and custom). Production leaves it nil so each
+	// step binds its provider via steps.NewLLMStream; tests and future
+	// replay/dry-run modes inject a function here.
+	LLMStream runner.LLMFunc
 }
 
 // NewEngine creates an engine by loading tomato.yaml from the given directory.
@@ -104,37 +113,111 @@ func (e *Engine) GetSteps(name string) []string {
 	return names
 }
 
+// RunOptions controls workflow execution.
+type RunOptions struct {
+	From   string
+	Resume bool
+	Force  bool
+}
+
 // Run executes a named workflow step by step.
 func (e *Engine) Run(workflowName string) error {
+	return e.RunWithOptions(workflowName, RunOptions{})
+}
+
+func (e *Engine) planSteps(workflowName string, opts RunOptions) []config.WorkflowStep {
+	steps, _ := e.planStepsChecked(workflowName, opts)
+	return steps
+}
+
+func (e *Engine) planStepsChecked(workflowName string, opts RunOptions) ([]config.WorkflowStep, error) {
+	if opts.From != "" && opts.Resume {
+		return nil, fmt.Errorf("--from and --resume cannot be used together")
+	}
 	wf, ok := e.Workflows[workflowName]
 	if !ok {
-		return fmt.Errorf("workflow %q not found", workflowName)
+		return nil, fmt.Errorf("workflow %q not found", workflowName)
+	}
+	if opts.Resume {
+		s, err := state.Load(e.RepoDir, workflowName, e.Feature)
+		if err != nil {
+			return nil, fmt.Errorf("--resume: %w", err)
+		}
+		if s.FailedStep == "" {
+			return nil, fmt.Errorf("no failed step recorded for workflow %q feature %q; nothing to resume", workflowName, e.Feature)
+		}
+		opts.From = s.FailedStep
+	}
+	if opts.From == "" {
+		return wf.Steps, nil
+	}
+	for i, s := range wf.Steps {
+		if s.Name == opts.From {
+			return wf.Steps[i:], nil
+		}
+	}
+	return nil, fmt.Errorf("--from step %q not found in workflow %q", opts.From, workflowName)
+}
+
+func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
+	stepsToRun, err := e.planStepsChecked(workflowName, opts)
+	if err != nil {
+		return err
 	}
 
-	for i, stepCfg := range wf.Steps {
+	// completed tracks finished step names so a mid-workflow failure can
+	// persist resumable state (design §3.2, Task 3).
+	completed := make([]string, 0, len(stepsToRun))
+
+	for i, stepCfg := range stepsToRun {
 		if stepCfg.IsMetaStep && stepCfg.Name == "review_loop" {
-			fmt.Printf("▶ [%d/%d] review_loop (max_rounds=%d)\n", i+1, len(wf.Steps), stepCfg.MaxRounds)
+			fmt.Printf("▶ [%d/%d] review_loop (max_rounds=%d)\n", i+1, len(stepsToRun), stepCfg.MaxRounds)
 			if err := e.runReviewLoop(stepCfg); err != nil {
 				return err
 			}
 			continue
 		}
 
-		fmt.Printf("▶ [%d/%d] %s\n", i+1, len(wf.Steps), stepCfg.Name)
-		stepFn, err := steps.Get(stepCfg.Name)
+		fmt.Printf("▶ [%d/%d] %s\n", i+1, len(stepsToRun), stepCfg.Name)
+		featureDir := e.featureDir()
+		stepConfig := e.stepConfig(featureDir, e.Feature, stepCfg.Name)
+		result, err := e.executeStep(stepCfg.Name, stepConfig)
 		if err != nil {
 			return fmt.Errorf("step %d (%s): %w", i, stepCfg.Name, err)
 		}
-
-			featureDir := e.featureDir()
-			stepConfig := e.stepConfig(featureDir, e.Feature, stepCfg.Name)
-
-		result := stepFn(stepConfig, nil)
 		if !result.Success {
 			fmt.Printf("✗ %s failed: %s\n", stepCfg.Name, result.Error)
+			if saveErr := state.Save(e.RepoDir, state.WorkflowState{
+				Workflow:       workflowName,
+				Feature:        e.Feature,
+				CurrentStep:    stepCfg.Name,
+				FailedStep:     stepCfg.Name,
+				CompletedSteps: completed,
+				LastRunID:      result.RunID,
+			}); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "⚠  warning: failed to persist resume state: %v\n", saveErr)
+			}
 			return fmt.Errorf("step %q failed: %s", stepCfg.Name, result.Error)
 		}
 		fmt.Printf("✓ %s completed (run: %s)\n", stepCfg.Name, result.RunID)
+
+		// Commit the feature's intermediate artifacts (design docs, reviews,
+		// reports, …) as they are produced, scoped to docs/specs/<feature>/.
+		// Best-effort: a failed commit is a warning, never a step failure.
+		if err := steps.CommitFeatureArtifacts(e.RepoDir, featureDir, e.Feature, stepCfg.Name); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit feature artifacts: %v\n", err)
+		}
+
+		completed = append(completed, stepCfg.Name)
+		if saveErr := state.Save(e.RepoDir, state.WorkflowState{
+			Workflow:       workflowName,
+			Feature:        e.Feature,
+			CurrentStep:    stepCfg.Name,
+			CompletedSteps: completed,
+			LastRunID:      result.RunID,
+		}); saveErr != nil {
+			fmt.Fprintf(os.Stderr, "⚠  warning: failed to persist resume state: %v\n", saveErr)
+		}
 
 		// Post-hook: after impl, archive the design trio to v<N>/ and rewrite
 		// architecture.md to reflect the real, as-implemented architecture
@@ -163,7 +246,9 @@ func (e *Engine) Run(workflowName string) error {
 		}
 	}
 
-	return nil
+	// All steps succeeded — clear any prior resume state so a subsequent
+	// --resume does not re-run from a stale failed step.
+	return state.Clear(e.RepoDir, workflowName, e.Feature)
 }
 
 // stepStatus maps a completed step to its external status label (design §2.1).
@@ -218,6 +303,10 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 			"pr_ref":   prRef,
 			"comments": string(comments),
 		})
+		// Commit the review comments artifact (reviews/r<N>-comments.md).
+		if err := steps.CommitFeatureArtifacts(e.RepoDir, featureDir, e.Feature, fmt.Sprintf("review-r%d", round)); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit review artifacts: %v\n", err)
+		}
 
 		if !steps.HasBlockingIssues(reviewPath) {
 			fmt.Printf("✓ review_loop converged in round %d\n", round)
@@ -232,6 +321,10 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 			fixResult := implFn(implCfg, nil)
 			if !fixResult.Success {
 				return fmt.Errorf("fix round %d failed: %s", round, fixResult.Error)
+			}
+			// Commit docs artifacts produced/changed by the fix round.
+			if err := steps.CommitFeatureArtifacts(e.RepoDir, featureDir, e.Feature, fmt.Sprintf("fix-r%d", round)); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit fix artifacts: %v\n", err)
 			}
 			e.callAdapter(prBridge, adapter.CmdUpdatePR, map[string]string{
 				"pr_ref": prRef,
@@ -282,8 +375,32 @@ func (e *Engine) stepConfig(featureDir, feature, stepName string) *steps.StepCon
 		AnthropicModel: provider.ResolvedModel(),
 		BudgetTracker:  e.Tracker,
 	}
-	cfg.LLMStream = steps.NewLLMStream(cfg)
+	if e.LLMStream != nil {
+		cfg.LLMStream = e.LLMStream
+	} else {
+		cfg.LLMStream = steps.NewLLMStream(cfg)
+	}
 	return cfg
+}
+
+// executeStep resolves a workflow step to either a registered built-in step or
+// a user-defined custom step (design §3.3, Task 4). A step that is neither
+// registered nor declared in custom_steps returns the original lookup error so
+// callers surface a clear "unknown step" message.
+func (e *Engine) executeStep(name string, cfg *steps.StepConfig) (*model.StepResult, error) {
+	stepFn, err := steps.Get(name)
+	if err == nil {
+		return stepFn(cfg, nil), nil
+	}
+	if def, ok := e.Config.CustomSteps[name]; ok {
+		return customstep.Run(name, def, customstep.Config{
+			RepoDir:       cfg.RepoDir,
+			ModelName:     cfg.ModelName,
+			LLMStream:     cfg.LLMStream,
+			BudgetTracker: cfg.BudgetTracker,
+		}), nil
+	}
+	return nil, err
 }
 
 // askOnFail implements the on_fail: ask policy. It prompts on an interactive

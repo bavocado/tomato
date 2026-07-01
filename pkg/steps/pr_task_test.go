@@ -1,6 +1,7 @@
 package steps
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,6 +95,31 @@ func TestRunPRUsesAdapterAndWritesRefs(t *testing.T) {
 	}
 }
 
+func TestRunPRPrintsCreatedPRURL(t *testing.T) {
+	repo := t.TempDir()
+	newGitRepo(t, repo)
+	featureDir := filepath.Join(repo, "docs", "specs", "current-feature")
+	os.MkdirAll(featureDir, 0755)
+
+	logPath := filepath.Join(repo, "adapter.log")
+	bin := fakeAdapter(t, repo, logPath, `{"pr_ref":"42","url":"https://example.com/pr/42"}`)
+
+	reg := adapter.NewRegistry()
+	reg.Set("pr", &adapter.Bridge{Bin: bin})
+
+	cfg := &StepConfig{RepoDir: repo, FeatureDir: featureDir, Feature: "current-feature", Adapters: reg}
+	stdout := captureStdout(t, func() {
+		result := runPR(cfg, nil)
+		if !result.Success {
+			t.Fatalf("runPR failed: %s", result.Error)
+		}
+	})
+
+	if !strings.Contains(stdout, "https://example.com/pr/42") {
+		t.Fatalf("expected stdout to contain PR URL, got %q", stdout)
+	}
+}
+
 func TestRunPRNoAdapterFails(t *testing.T) {
 	repo := t.TempDir()
 	newGitRepo(t, repo)
@@ -153,6 +179,117 @@ func TestPreparePRBranchCreatesFeatureBranchFromMainAndCommits(t *testing.T) {
 	}
 }
 
+// addBareRemote creates a bare git repo and adds it as "origin" of the given
+// working repo, then pushes main so origin/main exists. Returns the bare path.
+func addBareRemote(t *testing.T, repo string) string {
+	t.Helper()
+	bare := t.TempDir()
+	runGit(t, bare, "init", "--bare")
+	runGit(t, repo, "remote", "add", "origin", bare)
+	runGit(t, repo, "push", "-u", "origin", "main")
+	return bare
+}
+
+// TestPreparePRBranchFromOriginMain verifies that when a remote origin exists,
+// the feature branch is created from origin/main (the fetched remote tip), not
+// from the local HEAD. We simulate a diverged state: local main is behind
+// origin/main, and preparePRBranch must land on the newer origin/main commit.
+func TestPreparePRBranchFromOriginMain(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "t@t.com")
+	runGit(t, repo, "config", "user.name", "T")
+	runGit(t, repo, "checkout", "-b", "main")
+	os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base"), 0644)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "base")
+	addBareRemote(t, repo)
+
+	// Advance origin/main with an extra commit, then roll local main back so
+	// local HEAD is behind origin/main.
+	os.WriteFile(filepath.Join(repo, "remote-extra.txt"), []byte("from-remote"), 0644)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "remote-extra")
+	runGit(t, repo, "push", "origin", "main")
+	runGit(t, repo, "reset", "--hard", "HEAD~1")
+
+	// Sanity: local HEAD no longer has remote-extra.txt.
+	if _, err := os.Stat(filepath.Join(repo, "remote-extra.txt")); !os.IsNotExist(err) {
+		t.Fatalf("precondition: local should be behind origin/main")
+	}
+
+	branch, err := preparePRBranch(repo, "feat-x")
+	if err != nil {
+		t.Fatalf("preparePRBranch: %v", err)
+	}
+	if branch != "tomato/feat-x" {
+		t.Fatalf("expected tomato/feat-x, got %s", branch)
+	}
+	// The new branch must be based on origin/main, so remote-extra.txt exists.
+	if _, err := os.Stat(filepath.Join(repo, "remote-extra.txt")); err != nil {
+		t.Fatalf("expected branch based on origin/main (remote-extra.txt missing): %v", err)
+	}
+}
+
+// TestPreparePRBranchSuffixesExistingBranch verifies that when tomato/<feature>
+// already exists, a new tomato/<feature>-2 (then -3, …) is created and the old
+// branch is preserved.
+func TestPreparePRBranchSuffixesExistingBranch(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "t@t.com")
+	runGit(t, repo, "config", "user.name", "T")
+	runGit(t, repo, "checkout", "-b", "main")
+	os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base"), 0644)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "base")
+
+	// Pre-create tomato/feat-y so the first run must pick -2.
+	runGit(t, repo, "branch", "tomato/feat-y")
+
+	branch, err := preparePRBranch(repo, "feat-y")
+	if err != nil {
+		t.Fatalf("preparePRBranch: %v", err)
+	}
+	if branch != "tomato/feat-y-2" {
+		t.Fatalf("expected tomato/feat-y-2, got %s", branch)
+	}
+	// Old branch still exists.
+	out, err := exec.Command("git", "-C", repo, "rev-parse", "--verify", "tomato/feat-y").Output()
+	if err != nil {
+		t.Fatalf("old branch tomato/feat-y should still exist: %v", err)
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		t.Fatal("tomato/feat-y ref is empty")
+	}
+}
+
+// TestPreparePRBranchFallsBackToHEADWithoutRemote verifies that without an
+// origin remote, the feature branch is created from the local current HEAD
+// (the existing behavior), so pure-local repos and unit tests keep working.
+func TestPreparePRBranchFallsBackToHEADWithoutRemote(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "t@t.com")
+	runGit(t, repo, "config", "user.name", "T")
+	runGit(t, repo, "checkout", "-b", "main")
+	os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base"), 0644)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "base")
+	// No remote configured.
+
+	branch, err := preparePRBranch(repo, "local-feat")
+	if err != nil {
+		t.Fatalf("preparePRBranch: %v", err)
+	}
+	if branch != "tomato/local-feat" {
+		t.Fatalf("expected tomato/local-feat, got %s", branch)
+	}
+	if getCurrentBranch(repo) != "tomato/local-feat" {
+		t.Fatalf("expected to be on tomato/local-feat, got %s", getCurrentBranch(repo))
+	}
+}
+
 func TestRunTaskUsesAdapterAndWritesRef(t *testing.T) {
 	repo := t.TempDir()
 	featureDir := filepath.Join(repo, "docs", "specs", "current-feature")
@@ -180,4 +317,22 @@ func TestRunTaskUsesAdapterAndWritesRef(t *testing.T) {
 	if ref.TaskRef != "ISSUE-7" {
 		t.Errorf("task.json task_ref = %q, want ISSUE-7", ref.TaskRef)
 	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+
+	fn()
+
+	w.Close()
+	os.Stdout = old
+	data, _ := io.ReadAll(r)
+	r.Close()
+	return string(data)
 }

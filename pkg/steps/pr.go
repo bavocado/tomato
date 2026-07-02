@@ -107,10 +107,25 @@ func getCurrentBranch(dir string) string {
 func preparePRBranch(repoDir, feature string) (string, error) {
 	branch, base, hasRemote := resolvePRBranch(repoDir, feature)
 	if base != "" {
+		stashed := false
+		if hasWorkingTreeChanges(repoDir) {
+			if err := runGitCmd(repoDir, "stash", "push", "--include-untracked", "-m", "tomato prepare-pr worktree"); err != nil {
+				return "", fmt.Errorf("stashing working tree before branch switch: %w", err)
+			}
+			stashed = true
+		}
 		// `-b` (not `-B`): never overwrite an existing branch; pickFeatureBranchName
 		// already guaranteed a free name when a new branch is needed.
 		if err := runGitCmd(repoDir, "checkout", "-b", branch, base); err != nil {
+			if stashed {
+				_ = runGitCmd(repoDir, "stash", "pop")
+			}
 			return "", fmt.Errorf("creating PR branch %s from %s: %w", branch, base, err)
+		}
+		if stashed {
+			if err := restoreStashedWorktree(repoDir); err != nil {
+				return "", fmt.Errorf("restoring working tree changes on %s: %w", branch, err)
+			}
 		}
 	}
 
@@ -180,6 +195,62 @@ func refExists(repoDir, ref string) bool {
 	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", ref)
 	cmd.Dir = repoDir
 	return cmd.Run() == nil
+}
+
+// restoreStashedWorktree restores the most recent stash onto the new PR branch.
+// When switching from origin/main to a feature branch, generated artifacts may
+// exist only in the stash and be absent from origin/main. A plain `stash pop`
+// reports modify/delete conflicts in that case. The stashed content is the
+// authoritative generated output, so on conflict we choose the stash side
+// (`--theirs`) for every unmerged path, stage those resolutions, and drop the
+// stash entry.
+func restoreStashedWorktree(repoDir string) error {
+	if err := runGitCmd(repoDir, "stash", "pop"); err == nil {
+		return nil
+	}
+	paths := unmergedPaths(repoDir)
+	if len(paths) == 0 {
+		return fmt.Errorf("git stash pop failed")
+	}
+	args := append([]string{"checkout", "--theirs", "--"}, paths...)
+	if err := runGitCmd(repoDir, args...); err != nil {
+		return fmt.Errorf("taking stashed versions for conflicted paths: %w", err)
+	}
+	args = append([]string{"add", "--"}, paths...)
+	if err := runGitCmd(repoDir, args...); err != nil {
+		return fmt.Errorf("staging stash conflict resolutions: %w", err)
+	}
+	if err := runGitCmd(repoDir, "stash", "drop"); err != nil {
+		return fmt.Errorf("dropping restored stash: %w", err)
+	}
+	return nil
+}
+
+func unmergedPaths(repoDir string) []string {
+	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=U")
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if p := strings.TrimSpace(line); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+// hasWorkingTreeChanges reports whether tracked or untracked working-tree
+// changes exist. It is used before switching from the current branch to a new
+// PR branch based on origin/main so generated artifacts are carried over safely
+// instead of blocking checkout.
+func hasWorkingTreeChanges(repoDir string) bool {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
 func hasStagedChanges(repoDir string) bool {

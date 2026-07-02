@@ -231,6 +231,61 @@ func TestPreparePRBranchFromOriginMain(t *testing.T) {
 	}
 }
 
+// TestPreparePRBranchPreservesDirtyArtifactsWhenSwitchingFromOriginMain
+// reproduces the workflow failure where impl rewrites architecture.md and the
+// following pr step tries to checkout a branch from origin/main. The dirty
+// artifact must be carried onto the new branch and committed, not block checkout.
+func TestPreparePRBranchPreservesDirtyArtifactsWhenSwitchingFromOriginMain(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "t@t.com")
+	runGit(t, repo, "config", "user.name", "T")
+	runGit(t, repo, "checkout", "-b", "main")
+
+	featureDir := filepath.Join(repo, "docs", "specs", "openai-endpoint-forwarder")
+	archPath := filepath.Join(featureDir, "architecture.md")
+	os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base"), 0644)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "base")
+	addBareRemote(t, repo)
+
+	// Simulate design having created and committed the feature artifact locally,
+	// while origin/main still does not contain this feature directory.
+	os.MkdirAll(featureDir, 0755)
+	os.WriteFile(archPath, []byte("old architecture"), 0644)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "design artifacts")
+
+	// Simulate the rewrite-arch post-hook changing the tracked artifact
+	// immediately before pr runs.
+	os.WriteFile(archPath, []byte("rewritten architecture"), 0644)
+
+	branch, err := preparePRBranch(repo, "openai-endpoint-forwarder")
+	if err != nil {
+		t.Fatalf("preparePRBranch should preserve dirty artifacts instead of failing checkout: %v", err)
+	}
+	if branch != "tomato/openai-endpoint-forwarder" {
+		t.Fatalf("expected tomato/openai-endpoint-forwarder, got %s", branch)
+	}
+	data, err := os.ReadFile(archPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "rewritten architecture" {
+		t.Fatalf("dirty artifact content not preserved, got %q", string(data))
+	}
+	if getCurrentBranch(repo) != branch {
+		t.Fatalf("expected current branch %s, got %s", branch, getCurrentBranch(repo))
+	}
+	out, err := exec.Command("git", "-C", repo, "status", "--porcelain").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("expected clean working tree after committing preserved artifact, got %q", string(out))
+	}
+}
+
 // TestPreparePRBranchSuffixesExistingBranch verifies that when tomato/<feature>
 // already exists, a new tomato/<feature>-2 (then -3, …) is created and the old
 // branch is preserved.

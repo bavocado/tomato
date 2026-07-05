@@ -3,7 +3,10 @@ package steps
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/bavocado/tomato/pkg/runner"
 )
 
 func TestHasBlockingIssuesExactJSON(t *testing.T) {
@@ -150,5 +153,150 @@ func TestHasBlockingIssuesUnparseableDefaultsFalse(t *testing.T) {
 
 	if HasBlockingIssues(path) {
 		t.Error("expected false for unparseable review output (avoid infinite loop)")
+	}
+}
+
+// TestRunReviewStripsJSONFromCommentsFile verifies that the review output
+// written to r<N>-comments.md does NOT contain the JSON object block — only
+// the markdown summary. The JSON is parsed for HasBlockingIssues but must not
+// pollute the human-readable comments file.
+func TestRunReviewStripsJSONFromCommentsFile(t *testing.T) {
+	repo := t.TempDir()
+	featureDir := filepath.Join(repo, "docs", "specs", "f")
+	os.MkdirAll(featureDir, 0755)
+
+	// Provide minimal input files so buildMessages doesn't error.
+	os.WriteFile(filepath.Join(featureDir, "architecture.md"), []byte("# arch"), 0644)
+	os.WriteFile(filepath.Join(featureDir, "implementation.md"), []byte("# impl"), 0644)
+
+	// Mock LLM that returns JSON + markdown, exactly as the prompt asks.
+	mockResponse := `{
+  "comments": [
+    {"file": "main.go", "line": 10, "severity": "blocking", "message": "bug", "suggestion": "fix it"}
+  ],
+  "summary": "found a bug",
+  "has_blocking": true
+}
+
+# Review Summary
+## Blocking Issues
+- main.go:10 — bug
+## Major Issues
+None
+## Minor Issues
+None
+## Positive Notes
+Clean structure.
+## Final Recommendation
+REQUEST_CHANGES
+`
+
+	cfg := &StepConfig{
+		RepoDir:    repo,
+		FeatureDir: featureDir,
+		Feature:    "f",
+		ModelName:  "glm/glm-5.2",
+		LLMStream: func(messages []runner.Message, onChunk func(string)) error {
+			onChunk(mockResponse)
+			return nil
+		},
+	}
+
+	result := runReview(cfg, []string{"r1"})
+	if !result.Success {
+		t.Fatalf("runReview failed: %s", result.Error)
+	}
+
+	commentsPath := filepath.Join(featureDir, "reviews", "r1-comments.md")
+	data, err := os.ReadFile(commentsPath)
+	if err != nil {
+		t.Fatalf("comments file not written: %v", err)
+	}
+	content := string(data)
+
+	// The .md file must NOT contain the JSON block.
+	if strings.Contains(content, `"has_blocking"`) || strings.Contains(content, `"comments"`) {
+		t.Errorf("comments .md should not contain JSON, got %q", content)
+	}
+	// The .md file MUST contain the markdown summary.
+	if !strings.Contains(content, "# Review Summary") {
+		t.Errorf("comments .md should contain markdown summary, got %q", content)
+	}
+	if !strings.Contains(content, "REQUEST_CHANGES") {
+		t.Errorf("comments .md should contain final recommendation, got %q", content)
+	}
+
+	// HasBlockingIssues must still work (reads the JSON sidecar).
+	if !HasBlockingIssues(commentsPath) {
+		t.Error("expected HasBlockingIssues to return true")
+	}
+}
+
+// TestRunReviewStripsFencedJSON verifies that JSON wrapped in a ```json code
+// fence (as LLMs often emit) is stripped from the .md and written to the
+// .json sidecar. This is the real-world review output shape.
+func TestRunReviewStripsFencedJSON(t *testing.T) {
+	repo := t.TempDir()
+	featureDir := filepath.Join(repo, "docs", "specs", "f")
+	os.MkdirAll(featureDir, 0755)
+	os.WriteFile(filepath.Join(featureDir, "architecture.md"), []byte("# arch"), 0644)
+	os.WriteFile(filepath.Join(featureDir, "implementation.md"), []byte("# impl"), 0644)
+
+	mockResponse := `核查完毕。关键事实已验证。
+
+` + "```json" + `
+{
+  "comments": [
+    {"file": "main.go", "line": 1, "severity": "blocking", "message": "bug"}
+  ],
+  "summary": "found a bug",
+  "has_blocking": true
+}
+` + "```" + `
+
+# Review Summary
+## Blocking Issues
+- main.go:1 — bug
+## Final Recommendation
+REQUEST_CHANGES
+`
+
+	cfg := &StepConfig{
+		RepoDir:    repo,
+		FeatureDir: featureDir,
+		Feature:    "f",
+		ModelName:  "glm/glm-5.2",
+		LLMStream: func(messages []runner.Message, onChunk func(string)) error {
+			onChunk(mockResponse)
+			return nil
+		},
+	}
+
+	result := runReview(cfg, []string{"r1"})
+	if !result.Success {
+		t.Fatalf("runReview failed: %s", result.Error)
+	}
+
+	commentsPath := filepath.Join(featureDir, "reviews", "r1-comments.md")
+	data, _ := os.ReadFile(commentsPath)
+	content := string(data)
+
+	if strings.Contains(content, `"has_blocking"`) || strings.Contains(content, "```json") {
+		t.Errorf("comments .md should not contain fenced JSON, got %q", content)
+	}
+	if !strings.Contains(content, "# Review Summary") {
+		t.Errorf("comments .md should contain markdown summary, got %q", content)
+	}
+	// JSON sidecar should exist and be parseable.
+	jsonPath := filepath.Join(featureDir, "reviews", "r1-comments.json")
+	jdata, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatalf("json sidecar not written: %v", err)
+	}
+	if !strings.Contains(string(jdata), `"has_blocking": true`) {
+		t.Errorf("json sidecar missing has_blocking, got %q", string(jdata))
+	}
+	if !HasBlockingIssues(commentsPath) {
+		t.Error("expected HasBlockingIssues to return true from sidecar")
 	}
 }

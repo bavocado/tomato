@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bavocado/tomato/pkg/budget"
+	"github.com/bavocado/tomato/pkg/llm"
 	"github.com/bavocado/tomato/pkg/model"
 	"github.com/bavocado/tomato/pkg/runid"
 )
@@ -68,20 +69,69 @@ func Execute(
 		}
 	}
 
-	// Call LLM
-	logStep(stepName, "calling LLM model=%s", modelName)
-	var response strings.Builder
-	err = llmStream(messages, func(chunk string) {
-		response.WriteString(chunk)
-	})
-	if err != nil {
-		return failure(stepName, runID, start, modelName, err)
+	// Local response cache: same prompt + model + promptVersion → reuse the
+	// prior response and skip the LLM call entirely (design §2.9.3). The cache
+	// key folds in the rendered prompt text (which already embeds input file
+	// contents), so any input change invalidates it.
+	cache, _ := llm.NewCache(filepath.Join(repoDir, ".tomato", "cache"))
+	cacheKey := llm.CacheKey{
+		TemplateVersion: promptVersion,
+		PromptContent:   promptText,
+		ModelID:         modelName,
+	}
+	var responseText string
+	cacheHit := false
+	if cache != nil {
+		if cached, ok := cache.Get(cacheKey); ok {
+			logStep(stepName, "cache hit — skipping LLM call")
+			responseText = cached
+			cacheHit = true
+		}
+	}
+
+	if !cacheHit {
+		// Call LLM
+		logStep(stepName, "calling LLM model=%s", modelName)
+		var response strings.Builder
+		err = llmStream(messages, func(chunk string) {
+			response.WriteString(chunk)
+		})
+		if err != nil {
+			return failure(stepName, runID, start, modelName, err)
+		}
+		responseText = response.String()
+
+		// An empty response means the LLM produced no usable output (e.g.
+		// claude returned only a system init message with no text). Treat this
+		// as a failure so downstream steps don't consume an empty artifact.
+		if strings.TrimSpace(responseText) == "" {
+			errMsg := "LLM returned an empty response"
+			logStep(stepName, "✗ %s", errMsg)
+			return &model.StepResult{
+				StepName:   stepName,
+				RunID:      runID,
+				StartedAt:  start,
+				DurationMs: time.Since(start).Milliseconds(),
+				ModelUsed:  modelName,
+				Success:    false,
+				Error:      errMsg,
+			}
+		}
+
+		if cache != nil {
+			if err := cache.Set(cacheKey, responseText); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠  warning: failed to cache response: %v\n", err)
+			}
+		}
 	}
 
 	// Record actual token usage
-	responseText := response.String()
 	tokensIn := budget.EstimateTokens(promptText)
 	tokensOut := budget.EstimateTokens(responseText)
+	if cacheHit {
+		tokensIn = 0
+		tokensOut = 0
+	}
 	logStep(stepName, "LLM completed: tokens in=%d out=%d response_chars=%d", tokensIn, tokensOut, len(responseText))
 
 	if tracker != nil {
@@ -150,6 +200,7 @@ func Execute(
 		ModelUsed:   modelName,
 		TokensIn:    tokensIn,
 		TokensOut:   tokensOut,
+		CacheHit:    cacheHit,
 		Success:     true,
 		InputFiles:  inputFiles,
 		OutputFiles: outputFiles,
@@ -165,6 +216,7 @@ func Execute(
 		ModelUsed:  modelName,
 		TokensIn:   tokensIn,
 		TokensOut:  tokensOut,
+		CacheHit:   cacheHit,
 		Success:    true,
 	}
 }

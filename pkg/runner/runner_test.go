@@ -421,3 +421,139 @@ func TestExecuteSnapshotsArtifacts(t *testing.T) {
 		t.Errorf("expected snapshot to mirror the output, got %q", string(snapshot))
 	}
 }
+
+// TestExecuteCacheHitSkipsLLM verifies that a second Execute with the same
+// prompt + model + promptVersion is served from the local cache without
+// invoking the LLM again.
+func TestExecuteCacheHitSkipsLLM(t *testing.T) {
+	dir := t.TempDir()
+
+	callCount := 0
+	mockLLM := func(messages []Message, onChunk func(string)) error {
+		callCount++
+		onChunk("cached response")
+		return nil
+	}
+
+	inFile := filepath.Join(dir, "in.txt")
+	outFile := filepath.Join(dir, "out.md")
+
+	// First call: cold miss, LLM invoked, response cached.
+	os.WriteFile(inFile, []byte("hello"), 0644)
+	first := Execute("spec", "prompt {{.in.txt}}", []string{inFile}, []string{outFile}, dir, "glm/glm-5.2", mockLLM, "v1", nil)
+	if !first.Success {
+		t.Fatalf("first call failed: %s", first.Error)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected LLM invoked once on cold miss, got %d", callCount)
+	}
+	if first.CacheHit {
+		t.Error("first call should not be a cache hit")
+	}
+
+	// Second call: same prompt + model + version → cache hit, LLM NOT invoked.
+	second := Execute("spec", "prompt {{.in.txt}}", []string{inFile}, []string{outFile}, dir, "glm/glm-5.2", mockLLM, "v1", nil)
+	if !second.Success {
+		t.Fatalf("second call failed: %s", second.Error)
+	}
+	if callCount != 1 {
+		t.Errorf("expected LLM NOT invoked on cache hit, call count=%d", callCount)
+	}
+	if !second.CacheHit {
+		t.Error("second call should be a cache hit")
+	}
+
+	// Cached content must match the original response.
+	data, _ := os.ReadFile(outFile)
+	if string(data) != "cached response" {
+		t.Errorf("expected cached response, got %q", string(data))
+	}
+}
+
+// TestExecuteCacheMissOnDifferentPrompt verifies that changing the prompt
+// invalidates the cache and forces a fresh LLM call.
+func TestExecuteCacheMissOnDifferentPrompt(t *testing.T) {
+	dir := t.TempDir()
+
+	callCount := 0
+	mockLLM := func(messages []Message, onChunk func(string)) error {
+		callCount++
+		onChunk("response")
+		return nil
+	}
+
+	os.WriteFile(filepath.Join(dir, "in.txt"), []byte("input-a"), 0644)
+	Execute("spec", "prompt A {{.in.txt}}", []string{filepath.Join(dir, "in.txt")},
+		[]string{filepath.Join(dir, "out.md")}, dir, "glm/glm-5.2", mockLLM, "v1", nil)
+	if callCount != 1 {
+		t.Fatalf("first call should invoke LLM, got %d", callCount)
+	}
+
+	// Different input content → different prompt → cache miss.
+	os.WriteFile(filepath.Join(dir, "in.txt"), []byte("input-b"), 0644)
+	Execute("spec", "prompt A {{.in.txt}}", []string{filepath.Join(dir, "in.txt")},
+		[]string{filepath.Join(dir, "out.md")}, dir, "glm/glm-5.2", mockLLM, "v1", nil)
+	if callCount != 2 {
+		t.Errorf("different prompt should miss cache and invoke LLM, call count=%d", callCount)
+	}
+}
+
+// TestExecuteCacheMissOnDifferentModel verifies that switching the model
+// invalidates the cache (the cache key includes model_id).
+func TestExecuteCacheMissOnDifferentModel(t *testing.T) {
+	dir := t.TempDir()
+
+	callCount := 0
+	mockLLM := func(messages []Message, onChunk func(string)) error {
+		callCount++
+		onChunk("response")
+		return nil
+	}
+
+	os.WriteFile(filepath.Join(dir, "in.txt"), []byte("same input"), 0644)
+	common := []string{filepath.Join(dir, "in.txt")}
+	out := []string{filepath.Join(dir, "out.md")}
+
+	Execute("spec", "prompt {{.in.txt}}", common, out, dir, "glm/glm-5.2", mockLLM, "v1", nil)
+	Execute("spec", "prompt {{.in.txt}}", common, out, dir, "deepseek/deepseek-v4-pro", mockLLM, "v1", nil)
+	if callCount != 2 {
+		t.Errorf("different model should miss cache, call count=%d", callCount)
+	}
+}
+
+// TestExecuteFailsOnEmptyResponse verifies that when the LLM returns an empty
+// response (0 content), Execute reports a failure rather than writing an empty
+// artifact and claiming success. An empty response means the LLM call did not
+// produce usable output and downstream steps must not treat it as a valid
+// artifact.
+func TestExecuteFailsOnEmptyResponse(t *testing.T) {
+	dir := t.TempDir()
+
+	mockLLM := func(messages []Message, onChunk func(string)) error {
+		// Simulate claude returning an empty text field (system init only).
+		return nil
+	}
+
+	result := Execute(
+		"review",
+		"test prompt",
+		nil,
+		[]string{filepath.Join(dir, "out.md")},
+		dir,
+		"glm/glm-5.2",
+		mockLLM,
+		"v1",
+		nil,
+	)
+
+	if result.Success {
+		t.Fatal("expected failure for empty LLM response, got success")
+	}
+	if result.Error == "" {
+		t.Error("expected non-empty error message")
+	}
+	// The empty artifact must NOT be written.
+	if _, err := os.Stat(filepath.Join(dir, "out.md")); err == nil {
+		t.Error("empty output file should not be written")
+	}
+}

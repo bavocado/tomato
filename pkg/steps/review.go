@@ -93,36 +93,167 @@ func runReview(cfg *StepConfig, args []string) *model.StepResult {
 		filepath.Join(cfg.FeatureDir, "implementation.md"),
 		diffPath,
 	}
-	return runner.Execute(
+	commentsPath := filepath.Join(outputDir, round+"-comments.md")
+	// Fold the round into the prompt version so each review round has a
+	// distinct cache key. Without this, round 2/3 would hit round 1's cache
+	// (same prompt + model) and review_loop could never converge.
+	promptVersion := cfg.PromptVersion
+	if len(args) > 0 {
+		promptVersion = promptVersion + "-" + args[0]
+	}
+	result := runner.Execute(
 		"review",
 		ReviewPrompt,
 		inputFiles,
-		[]string{filepath.Join(outputDir, round+"-comments.md")},
+		[]string{commentsPath},
 		cfg.RepoDir,
 		cfg.ModelName,
 		cfg.LLMStream,
-		cfg.PromptVersion,
+		promptVersion,
 		cfg.BudgetTracker,
 	)
+
+	// The LLM emits a JSON object followed by a markdown summary. Strip the
+	// JSON block from the human-readable .md file and persist it as a sidecar
+	// .json so HasBlockingIssues can parse it without polluting the comments
+	// file. Best-effort: a post-processing failure must not reverse a
+	// successful review.
+	if result.Success {
+		stripJSONFromCommentsFile(commentsPath)
+	}
+	return result
+}
+
+// stripJSONFromCommentsFile reads the comments .md, extracts the leading JSON
+// block (if any) into a sibling .json file, and rewrites the .md with only the
+// remaining markdown. When there is no JSON block the file is left unchanged.
+func stripJSONFromCommentsFile(commentsPath string) {
+	data, err := os.ReadFile(commentsPath)
+	if err != nil {
+		return
+	}
+	content := string(data)
+	jsonPart, mdPart := splitReviewJSON(content)
+	if jsonPart == "" {
+		return
+	}
+	// Persist the JSON sidecar.
+	jsonPath := strings.TrimSuffix(commentsPath, ".md") + ".json"
+	os.WriteFile(jsonPath, []byte(jsonPart), 0644)
+	// Rewrite the .md with only the markdown summary.
+	os.WriteFile(commentsPath, []byte(strings.TrimSpace(mdPart)+"\n"), 0644)
+}
+
+// splitReviewJSON separates the leading JSON object from the trailing markdown
+// in a review response. The JSON may appear:
+//   - as a bare leading object:  { ... }
+//   - inside a ```json fenced block anywhere in the response
+//
+// Returns (json, markdown). If no JSON object is found, returns ("", content).
+func splitReviewJSON(content string) (jsonPart, mdPart string) {
+	// 1. Try a bare leading JSON object.
+	trimmed := strings.TrimLeft(content, " \t\r\n")
+	if strings.HasPrefix(trimmed, "{") {
+		if j, md := extractBalancedJSON(trimmed); j != "" {
+			return j, md
+		}
+	}
+
+	// 2. Look for a ```json fenced block anywhere in the content.
+	jsonPart, mdPart = extractFencedJSON(content)
+	if jsonPart != "" {
+		return jsonPart, mdPart
+	}
+
+	return "", content
+}
+
+// extractBalancedJSON finds the leading {...} by depth counting, tolerating
+// braces inside strings. Returns ("", "") when no balanced object is found.
+func extractBalancedJSON(s string) (json, rest string) {
+	depth := 0
+	inString := false
+	escaped := false
+	end := -1
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+			if depth == 0 {
+				end = i + 1
+				break
+			}
+		}
+	}
+	if end < 0 {
+		return "", ""
+	}
+	return s[:end], strings.TrimLeft(s[end:], " \t\r\n")
+}
+
+// extractFencedJSON finds a ```json ... ``` fenced block, extracts its content
+// as the JSON part, and returns the rest as markdown (with the fence removed).
+func extractFencedJSON(content string) (json, md string) {
+	const openFence = "```json"
+	idx := strings.Index(content, openFence)
+	if idx < 0 {
+		return "", ""
+	}
+	afterOpen := content[idx+len(openFence):]
+	closeIdx := strings.Index(afterOpen, "```")
+	if closeIdx < 0 {
+		return "", ""
+	}
+	jsonBody := strings.TrimSpace(afterOpen[:closeIdx])
+	// Only accept it if it looks like a JSON object.
+	if !strings.HasPrefix(jsonBody, "{") {
+		return "", ""
+	}
+	// Reconstruct markdown: content before the fence + content after the
+	// closing fence.
+	before := content[:idx]
+	after := afterOpen[closeIdx+3:]
+	md = strings.TrimRight(before, " \t\r\n") + "\n\n" + strings.TrimLeft(after, " \t\r\n")
+	return jsonBody, md
 }
 
 // HasBlockingIssues reports whether a review output contains blocking issues.
 //
-// The review step emits a JSON object followed by a markdown summary. The JSON
-// object's "has_blocking" field is the authoritative signal; we parse it
-// rather than substring-matching the word "blocking", because the markdown
-// summary always contains a "## Blocking Issues" section header (even when
-// empty) — bare substring matching would therefore always return true and the
-// review_loop could never converge.
+// The review step writes the JSON block (with has_blocking / comments) to a
+// sibling .json sidecar and the markdown summary to the .md file. This function
+// reads the .json sidecar for the authoritative signal. If the sidecar is
+// absent (older runs wrote JSON inside the .md), it falls back to scanning the
+// .md itself.
 //
-// If the JSON object is absent or unparseable, we fall back to an explicit
-// "has_blocking: true|false" text marker. If no signal can be found at all we
-// return false (and warn) so a malformed review does not loop forever; the raw
-// file remains on disk for manual inspection.
+// If no signal can be found we return false (and warn) so a malformed review
+// does not loop forever; the raw file remains on disk for manual inspection.
 func HasBlockingIssues(reviewPath string) bool {
-	data, err := os.ReadFile(reviewPath)
+	// Prefer the JSON sidecar.
+	jsonPath := strings.TrimSuffix(reviewPath, ".md") + ".json"
+	data, err := os.ReadFile(jsonPath)
 	if err != nil {
-		return false
+		// Fallback: the .md file itself (covers older outputs and tests).
+		data, err = os.ReadFile(reviewPath)
+		if err != nil {
+			return false
+		}
 	}
 	has, ok := parseHasBlocking(string(data))
 	if !ok {

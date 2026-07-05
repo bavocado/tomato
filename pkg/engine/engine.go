@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/bavocado/tomato/pkg/adapter"
 	"github.com/bavocado/tomato/pkg/archive"
 	"github.com/bavocado/tomato/pkg/budget"
 	"github.com/bavocado/tomato/pkg/config"
 	"github.com/bavocado/tomato/pkg/customstep"
+	"github.com/bavocado/tomato/pkg/llm"
 	"github.com/bavocado/tomato/pkg/model"
 	"github.com/bavocado/tomato/pkg/runner"
 	"github.com/bavocado/tomato/pkg/state"
@@ -165,6 +167,13 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 		return err
 	}
 
+	// Start each run with a fresh claude session so context from a prior run
+	// does not leak in. --resume within the run reuses this session across
+	// every LLM step (design §2.9 — shared session for cross-step context).
+	if !opts.Resume {
+		llm.ClearSession(e.RepoDir)
+	}
+
 	// completed tracks finished step names so a mid-workflow failure can
 	// persist resumable state (design §3.2, Task 3).
 	completed := make([]string, 0, len(stepsToRun))
@@ -298,11 +307,16 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 		reviewPath := filepath.Join(featureDir, "reviews", fmt.Sprintf("r%d-comments.md", round))
 		comments, _ := os.ReadFile(reviewPath)
 
-		// Post the round's review comments to the PR.
-		e.callAdapter(prBridge, adapter.CmdCommentPR, map[string]string{
-			"pr_ref":   prRef,
-			"comments": string(comments),
-		})
+		// Post the round's review comments to the PR. Skip when the comments
+		// file is empty to avoid a "Body cannot be blank" adapter error.
+		if strings.TrimSpace(string(comments)) != "" {
+			e.callAdapter(prBridge, adapter.CmdCommentPR, map[string]string{
+				"pr_ref":   prRef,
+				"comments": string(comments),
+			})
+		} else {
+			fmt.Fprintf(os.Stderr, "⚠  skipping comment-pr: review comments are empty\n")
+		}
 		// Commit the review comments artifact (reviews/r<N>-comments.md).
 		if err := steps.CommitFeatureArtifacts(e.RepoDir, featureDir, e.Feature, fmt.Sprintf("review-r%d", round)); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit review artifacts: %v\n", err)
@@ -318,13 +332,19 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 		if round <= maxRounds {
 			fmt.Printf("  → round %d found blocking issues, fixing...\n", round)
 				implCfg := e.stepConfig(featureDir, e.Feature, "impl")
-			fixResult := implFn(implCfg, nil)
+			fixResult := implFn(implCfg, []string{fmt.Sprintf("fix-r%d", round)})
 			if !fixResult.Success {
 				return fmt.Errorf("fix round %d failed: %s", round, fixResult.Error)
 			}
 			// Commit docs artifacts produced/changed by the fix round.
 			if err := steps.CommitFeatureArtifacts(e.RepoDir, featureDir, e.Feature, fmt.Sprintf("fix-r%d", round)); err != nil {
 				fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit fix artifacts: %v\n", err)
+			}
+			// Commit source-code changes the fix round made (impl rewrites
+			// source files under internal/, cmd/, etc.). pr already ran before
+			// review_loop, so without this the fix code would stay uncommitted.
+			if err := steps.CommitAllChanges(e.RepoDir, e.Feature, fmt.Sprintf("fix-r%d", round)); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit fix code changes: %v\n", err)
 			}
 			e.callAdapter(prBridge, adapter.CmdUpdatePR, map[string]string{
 				"pr_ref": prRef,

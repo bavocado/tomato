@@ -64,6 +64,13 @@ func runImpl(cfg *StepConfig, args []string) *model.StepResult {
 		filepath.Join(cfg.FeatureDir, "ui-spec.md"),
 		filepath.Join(cfg.FeatureDir, "implementation.md"),
 	}
+	// Fold fix-round args into the prompt version so each review_loop fix
+	// round has a distinct cache key. Without this, fix-r2 would hit fix-r1's
+	// cache (same prompt + model) and the fix would be a no-op.
+	promptVersion := cfg.PromptVersion
+	if len(args) > 0 {
+		promptVersion = promptVersion + "-" + args[0]
+	}
 	result := runner.Execute(
 		"impl",
 		ImplPrompt,
@@ -72,7 +79,7 @@ func runImpl(cfg *StepConfig, args []string) *model.StepResult {
 		cfg.RepoDir,
 		cfg.ModelName,
 		cfg.LLMStream,
-		cfg.PromptVersion,
+		promptVersion,
 		cfg.BudgetTracker,
 	)
 

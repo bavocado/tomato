@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bavocado/tomato/pkg/codegraph"
 	"github.com/bavocado/tomato/pkg/config"
 	"github.com/bavocado/tomato/pkg/cost"
 	"github.com/bavocado/tomato/pkg/engine"
@@ -43,6 +44,53 @@ func NewInitCmd() *cobra.Command {
 			gitignorePath := filepath.Join(dir, ".gitignore")
 			ensureGitignore(gitignorePath, []string{".tomato/", "tomato.yaml"})
 			fmt.Printf("✓ Updated .gitignore (.tomato/ and tomato.yaml)\n")
+
+			// Write CLAUDE.md with Karpathy working protocols so the `claude`
+			// CLI reads them as project-level guidance during every step.
+			// Creates when absent, appends when the file exists but lacks the
+			// guidelines, and skips (idempotent) when already present.
+			claudeMDPath := filepath.Join(dir, "CLAUDE.md")
+			action, err := config.WriteCLAUDEMD(claudeMDPath)
+			if err != nil {
+				return fmt.Errorf("writing CLAUDE.md: %w", err)
+			}
+			switch action {
+			case "created":
+				fmt.Printf("✓ Created CLAUDE.md (Karpathy guidelines)\n")
+			case "appended":
+				fmt.Printf("✓ Appended Karpathy guidelines to CLAUDE.md\n")
+			case "skipped":
+				fmt.Printf("✓ CLAUDE.md already contains Karpathy guidelines (skipped)\n")
+			}
+
+			// Build a codegraph index when the CLI is installed, so LLM steps
+			// can query the code knowledge graph via MCP during tomato run.
+			// Auto-install codegraph when it is missing. Set
+			// TOMATO_SKIP_CODEGRAPH=1 to skip (used by tests).
+			if os.Getenv("TOMATO_SKIP_CODEGRAPH") == "1" {
+				// skip codegraph entirely
+			} else {
+				cgBin, wasInstalled, err := codegraph.EnsureCLI()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "⚠  warning: codegraph install failed: %v\n", err)
+					fmt.Println("   Install manually: curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh")
+				} else if wasInstalled {
+					fmt.Printf("✓ Installed codegraph CLI (%s)\n", cgBin)
+					if codegraph.CLIPath() == "" {
+						fmt.Println("⚠  codegraph installed to ~/.local/bin — add it to PATH:")
+						fmt.Println("   export PATH=\"$HOME/.local/bin:$PATH\"")
+					}
+				}
+				if cgBin != "" {
+					if codegraph.HasIndex(dir) {
+						fmt.Printf("✓ codegraph index already exists in %s\n", dir)
+					} else if err := codegraph.InitIndex(dir); err != nil {
+						fmt.Fprintf(os.Stderr, "⚠  warning: codegraph init failed: %v\n", err)
+					} else {
+						fmt.Printf("✓ Built codegraph index (.codegraph/)\n")
+					}
+				}
+			}
 
 			// Warn about auth_token in git-tracked file
 			if !isTomatoYamlIgnored(gitignorePath) {

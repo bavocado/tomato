@@ -22,6 +22,15 @@ type ProviderConfig struct {
 	AuthToken string // passed to claude as ANTHROPIC_AUTH_TOKEN
 	Model     string // passed to claude as ANTHROPIC_MODEL
 
+	// SessionID, when non-empty, resumes an existing claude CLI session so
+	// prior conversation context is reused across steps in one workflow run.
+	SessionID string
+
+	// RepoDir is the project root. When it contains a .codegraph/ index, the
+	// claude CLI is launched with --mcp-config mounting the codegraph MCP
+	// server so the LLM can query the code knowledge graph.
+	RepoDir string
+
 	// Deprecated: kept for older call sites during migration.
 	AnthropicURL   string
 	AnthropicKey   string

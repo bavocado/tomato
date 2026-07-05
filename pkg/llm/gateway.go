@@ -113,7 +113,7 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 	claudeModel := firstNonEmpty(cfg.Model, cfg.AnthropicModel, modelName)
 
 	if providerName == "anthropic" || providerName == "glm" || providerName == "deepseek" || baseURL != "" || authToken != "" {
-		return NewClaudeCLIProvider(cfg.ModelID, baseURL, authToken, claudeModel)
+		return NewClaudeCLIProvider(cfg.ModelID, baseURL, authToken, claudeModel, cfg.SessionID, cfg.RepoDir)
 	}
 
 	return &OpenAIProvider{

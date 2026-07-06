@@ -390,9 +390,9 @@ func (e *Engine) stepConfig(featureDir, feature, stepName string) *steps.StepCon
 		Feature:        feature,
 		ModelName:      modelID,
 		Adapters:       e.Adapters,
-		AnthropicURL:   provider.ResolvedBaseURL(),
-		AnthropicKey:   provider.ResolvedAuthToken(),
-		AnthropicModel: provider.ResolvedModel(),
+		AnthropicURL:   provider.BaseURL,
+		AnthropicKey:   provider.AuthToken,
+		AnthropicModel: provider.Model,
 		BudgetTracker:  e.Tracker,
 	}
 	if e.LLMStream != nil {

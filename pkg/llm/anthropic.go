@@ -98,18 +98,30 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	// Forward env from parent, then override with yaml config values
+	// Build a clean env for the claude subprocess. We strip any pre-existing
+	// ANTHROPIC_* vars from the parent environment so they cannot interfere
+	// with the provider config tomato resolved from tomato.yaml (e.g. a stale
+	// ANTHROPIC_AUTH_TOKEN exported in the user's shell would otherwise cause
+	// "Not logged in" errors). Then we inject the yaml values.
 	env := os.Environ()
+	var clean []string
+	for _, e := range env {
+		if strings.HasPrefix(e, "ANTHROPIC_") {
+			continue
+		}
+		clean = append(clean, e)
+	}
 	if p.BaseURL != "" {
-		env = append(env, "ANTHROPIC_BASE_URL="+p.BaseURL)
+		clean = append(clean, "ANTHROPIC_BASE_URL="+p.BaseURL)
 	}
 	if p.AuthToken != "" {
-		env = append(env, "ANTHROPIC_AUTH_TOKEN="+p.AuthToken)
+		clean = append(clean, "ANTHROPIC_AUTH_TOKEN="+p.AuthToken)
+		clean = append(clean, "ANTHROPIC_API_KEY="+p.AuthToken)
 	}
 	if p.ClaudeModel != "" {
-		env = append(env, "ANTHROPIC_MODEL="+p.ClaudeModel)
+		clean = append(clean, "ANTHROPIC_MODEL="+p.ClaudeModel)
 	}
-	cmd.Env = env
+	cmd.Env = clean
 
 	var stdout, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdout
@@ -128,7 +140,30 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 	select {
 	case waitErr := <-waitDone:
 		if waitErr != nil {
+			// Even on non-zero exit, claude may have written a JSON array to
+			// stdout containing a "result" entry with is_error=true (e.g. API
+			// 429 quota exceeded). Try to parse it for a better error message
+			// before falling back to the generic exit error.
 			stderrStr := strings.TrimSpace(stderrBuf.String())
+			if stdout.Len() > 0 {
+				if text, sid, perr := parseClaudeJSON(stdout.Bytes(), stderrStr); perr == nil {
+					if sid != "" {
+						p.LastSessionID = sid
+					}
+					if text != "" {
+						onChunk(text)
+						return nil
+					}
+					// JSON parsed but no text — treat as error.
+					if stderrStr != "" {
+						return fmt.Errorf("claude exited with error: %s", stderrStr)
+					}
+					return fmt.Errorf("claude exited: %w", waitErr)
+				} else if perr != nil {
+					// JSON had is_error result — return that specific error.
+					return perr
+				}
+			}
 			if stderrStr != "" {
 				return fmt.Errorf("claude exited with error: %s", stderrStr)
 			}
@@ -143,9 +178,9 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 	}
 
 	// Parse the JSON array and extract the session id + text content.
-	text, sid, err := parseClaudeJSON(stdout.Bytes())
+	text, sid, err := parseClaudeJSON(stdout.Bytes(), stderrBuf.String())
 	if err != nil {
-		return fmt.Errorf("parsing claude output: %w (stdout=%q)", err, stdout.String())
+		return err
 	}
 	if sid != "" {
 		p.LastSessionID = sid
@@ -157,14 +192,20 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 }
 
 // parseClaudeJSON extracts the assistant text and session id from claude's
-// --output-format json output. The output is a JSON array of message objects;
-// we collect every "text" entry's content and the first "system" entry's
-// session_id.
-func parseClaudeJSON(data []byte) (text, sessionID string, err error) {
-	// claude may emit multiple JSON objects or a JSON array depending on
-	// version; handle both by attempting array first.
+// --output-format json output. Claude versions differ: older output may use
+// top-level text entries, while newer output nests text under
+// assistant.message.content. When a "result" entry reports is_error=true, we
+// return its result string as an error so the caller surfaces the real cause
+// (e.g. "Not logged in") instead of an opaque "empty response".
+//
+// When the JSON is truncated (claude exited early after printing only the
+// init/system message), json.Unmarshal fails. We then check whether the
+// fragment contains a session_id (so the caller can still resume) and return a
+// concise error — never the full stdout, which can be hundreds of KB.
+func parseClaudeJSON(data []byte, stderr string) (text, sessionID string, err error) {
 	var arr []map[string]interface{}
 	if jErr := json.Unmarshal(data, &arr); jErr == nil {
+		var resultText string
 		for _, m := range arr {
 			if m["type"] == "system" {
 				if sid, ok := m["session_id"].(string); ok && sid != "" {
@@ -176,24 +217,94 @@ func parseClaudeJSON(data []byte) (text, sessionID string, err error) {
 					text += c
 				}
 			}
+			if m["type"] == "assistant" {
+				text += nestedAssistantText(m)
+			}
+			if m["type"] == "result" {
+				if isErr, ok := m["is_error"].(bool); ok && isErr {
+					if r, ok := m["result"].(string); ok && r != "" {
+						return "", "", fmt.Errorf("claude error: %s", r)
+					}
+				}
+				if sid, ok := m["session_id"].(string); ok && sid != "" && sessionID == "" {
+					sessionID = sid
+				}
+				if r, ok := m["result"].(string); ok && r != "" {
+					resultText = r
+				}
+			}
+		}
+		if text == "" {
+			text = resultText
 		}
 		return text, sessionID, nil
 	}
-	// Fall back to a single object.
-	var obj map[string]interface{}
-	if jErr := json.Unmarshal(data, &obj); jErr != nil {
-		return "", "", jErr
+
+	// JSON is truncated or unparseable. Try to salvage a session_id from the
+	// fragment so the caller can persist it for resume. Then return a concise
+	// error: never embed the full stdout (can be 100s of KB).
+	salvagedSID := extractSessionIDFragment(string(data))
+	if salvagedSID != "" {
+		sessionID = salvagedSID
 	}
-	if sid, ok := obj["session_id"].(string); ok {
-		sessionID = sid
+	// Include the first 200 chars of stderr if present — that's where the
+	// real cause usually is.
+	detail := strings.TrimSpace(stderr)
+	if len(detail) > 200 {
+		detail = detail[:200] + "…"
 	}
-	if c, ok := obj["content"].(string); ok {
-		text = c
+	if detail != "" {
+		return "", sessionID, fmt.Errorf("claude output was truncated/incomplete (stderr: %s)", detail)
 	}
-	if r, ok := obj["result"].(string); ok && text == "" {
-		text = r
+	return "", sessionID, fmt.Errorf("claude output was truncated/incomplete (no stderr)")
+}
+
+func nestedAssistantText(m map[string]interface{}) string {
+	msg, ok := m["message"].(map[string]interface{})
+	if !ok {
+		return ""
 	}
-	return text, sessionID, nil
+	items, ok := msg["content"].([]interface{})
+	if !ok {
+		return ""
+	}
+	var b strings.Builder
+	for _, item := range items {
+		part, ok := item.(map[string]interface{})
+		if !ok || part["type"] != "text" {
+			continue
+		}
+		if s, ok := part["text"].(string); ok {
+			b.WriteString(s)
+		}
+	}
+	return b.String()
+}
+
+// extractSessionIDFragment tries to pull a "session_id":"…" value out of a
+// potentially-truncated JSON fragment using a regex, so the caller can still
+// persist the session id for resume even when the full JSON is unparseable.
+func extractSessionIDFragment(s string) string {
+	idx := strings.Index(s, `"session_id"`)
+	if idx < 0 {
+		return ""
+	}
+	rest := s[idx+len(`"session_id"`):]
+	colon := strings.Index(rest, ":")
+	if colon < 0 {
+		return ""
+	}
+	rest = rest[colon+1:]
+	quote := strings.Index(rest, `"`)
+	if quote < 0 {
+		return ""
+	}
+	rest = rest[quote+1:]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
 }
 
 // buildClaudePrompt concatenates messages into a single prompt text.

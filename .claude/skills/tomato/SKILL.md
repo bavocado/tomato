@@ -78,14 +78,14 @@ while round <= max_rounds + 1:
     1. 执行 review (r<N>)
     2. 输出审查结果到 reviews/r<N>-comments.md + .json
     3. 检查 has_blocking:
-       - false → 审查通过，循环结束
+       - false → 审查通过，PR 标记为 ready（`gh pr ready`），循环结束
        - true 且 round <= max_rounds:
          → 执行 impl fix-r<N>（只修复 review 指出的问题）
-         → commit，round++
+         → commit + push，round++
        - true 且 round > max_rounds:
-         → stop: 终止，报错
-         → continue: 警告，继续后续步骤
-         → ask: 询问用户
+         → stop: 终止，PR 标记为 failed，报错
+         → continue: 警告，PR 仍标记为 ready，继续后续步骤
+         → ask: 询问用户决定
 ```
 
 **自定义 step**（`custom_steps.<name>`）：
@@ -158,7 +158,13 @@ implementation.md：文件变更计划、公开签名、关键算法、数据结
 **输入**：feature 分支、feature 名
 **输出**：`pr.md` + `pr.json`
 
-`gh pr create --draft --title "feat(<feature>): <描述>"`。Body 含 PRD 摘要、变更、测试、`Tomato-Parent: <HEAD hash>`。
+`gh pr create --draft --title "feat(<feature>): <描述>"`。
+
+PR 起始为 draft 状态，**不会自动 merge**。只有在 `review_loop` 审查通过（无 blocking 问题）后，才标记为 ready：
+```bash
+gh pr ready
+```
+如果 review_loop 耗尽所有修复轮数仍有 blocking（且 `on_fail: stop`），PR 保持 draft 并标记为 failed。
 
 ### task — 任务同步
 

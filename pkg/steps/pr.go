@@ -16,10 +16,13 @@ func init() {
 }
 
 func runPR(cfg *StepConfig, args []string) *model.StepResult {
-	// Ensure code is on a PR-capable feature branch with generated changes committed.
-	branch, err := preparePRBranch(cfg.RepoDir, cfg.Feature)
-	if err != nil {
-		return &model.StepResult{Success: false, Error: err.Error()}
+	// The feature branch is created at the start of the workflow by the engine
+	// (PrepareFeatureBranch). By the time pr runs, all prior steps have already
+	// committed and pushed onto it. So pr only needs to call the adapter to
+	// open the PR — no branch creation or commit here.
+	branch := getCurrentBranch(cfg.RepoDir)
+	if branch == "" || branch == "main" || branch == "master" {
+		return &model.StepResult{Success: false, Error: "pr step expects to run on a feature branch; run via `tomato run` which creates the branch"}
 	}
 
 	br := cfg.Adapters.For("pr")
@@ -88,7 +91,64 @@ func getCurrentBranch(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// preparePRBranch ensures the working tree is on a PR-capable feature branch
+// PrepareFeatureBranch creates and switches to a tomato/<feature> branch
+// based on the freshest available main. It is called at the start of a
+// workflow run so every step commits onto the feature branch, never on local
+// main. Unlike preparePRBranch it does NOT add/commit/push — those happen
+// per-step via CommitFeatureArtifacts/CommitAllChanges.
+//
+// Stashes any dirty working-tree changes before switching and restores them
+// onto the new branch so generated files in flight are not lost.
+func PrepareFeatureBranch(repoDir, feature string) (string, error) {
+	branch, base, hasRemote := resolvePRBranch(repoDir, feature)
+	if base == "" {
+		// Staying on current branch (no remote, not on main). Nothing to do.
+		return branch, nil
+	}
+
+	stashed := false
+	if hasWorkingTreeChanges(repoDir) {
+		if err := runGitCmd(repoDir, "stash", "push", "--include-untracked", "-m", "tomato workflow start"); err != nil {
+			return "", fmt.Errorf("stashing working tree before branch switch: %w", err)
+		}
+		stashed = true
+	}
+	if err := runGitCmd(repoDir, "checkout", "-b", branch, base); err != nil {
+		if stashed {
+			_ = runGitCmd(repoDir, "stash", "pop")
+		}
+		return "", fmt.Errorf("creating feature branch %s from %s: %w", branch, base, err)
+	}
+	if stashed {
+		if err := restoreStashedWorktree(repoDir); err != nil {
+			return "", fmt.Errorf("restoring working tree changes on %s: %w", branch, err)
+		}
+	}
+	_ = hasRemote
+	return branch, nil
+}
+
+// SwitchBackToMain switches to the local main branch and fast-forwards it to
+// origin/main so the local main stays clean and in sync after a workflow run.
+// Called only on successful workflow completion. Best-effort: sync failures
+// are warnings, not fatal.
+func SwitchBackToMain(repoDir string) error {
+	if err := runGitCmd(repoDir, "checkout", "main"); err != nil {
+		// Try master as a fallback.
+		if err2 := runGitCmd(repoDir, "checkout", "master"); err2 != nil {
+			return fmt.Errorf("switching back to main: %w", err)
+		}
+	}
+	// Only pull when a remote exists; pure-local repos have nothing to sync.
+	if getGitRemote(&StepConfig{RepoDir: repoDir}) != "" {
+		if err := runGitCmd(repoDir, "pull", "--ff-only", "origin", "main"); err != nil {
+			// ff-only pull can fail if local main diverged (e.g. orphan commits
+			// from an older tomato run). Reset to origin/main to recover.
+			_ = runGitCmd(repoDir, "reset", "--hard", "origin/main")
+		}
+	}
+	return nil
+}
 // before staging and committing generated changes. The feature branch is based
 // on the freshest available main:
 //

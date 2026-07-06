@@ -174,6 +174,17 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 		llm.ClearSession(e.RepoDir)
 	}
 
+	// Switch to a tomato/<feature> branch at the start so every step commits
+	// onto the feature branch, never on local main. Skip on --resume (already
+	// on the feature branch from the prior partial run).
+	if !opts.Resume {
+		branch, err := steps.PrepareFeatureBranch(e.RepoDir, e.Feature)
+		if err != nil {
+			return fmt.Errorf("preparing feature branch: %w", err)
+		}
+		fmt.Printf("🌿 on branch %s\n", branch)
+	}
+
 	// completed tracks finished step names so a mid-workflow failure can
 	// persist resumable state (design §3.2, Task 3).
 	completed := make([]string, 0, len(stepsToRun))
@@ -257,7 +268,18 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 
 	// All steps succeeded — clear any prior resume state so a subsequent
 	// --resume does not re-run from a stale failed step.
-	return state.Clear(e.RepoDir, workflowName, e.Feature)
+	if err := state.Clear(e.RepoDir, workflowName, e.Feature); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠  warning: failed to clear resume state: %v\n", err)
+	}
+
+	// Switch back to main and sync so local main stays clean. Best-effort: a
+	// failure here is a warning, not fatal (the workflow itself succeeded).
+	if err := steps.SwitchBackToMain(e.RepoDir); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠  warning: failed to switch back to main: %v\n", err)
+	} else {
+		fmt.Printf("🌿 switched back to main (synced with origin/main)\n")
+	}
+	return nil
 }
 
 // stepStatus maps a completed step to its external status label (design §2.1).

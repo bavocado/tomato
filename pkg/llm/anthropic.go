@@ -205,39 +205,14 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 func parseClaudeJSON(data []byte, stderr string) (text, sessionID string, err error) {
 	var arr []map[string]interface{}
 	if jErr := json.Unmarshal(data, &arr); jErr == nil {
-		var resultText string
-		for _, m := range arr {
-			if m["type"] == "system" {
-				if sid, ok := m["session_id"].(string); ok && sid != "" {
-					sessionID = sid
-				}
-			}
-			if m["type"] == "text" {
-				if c, ok := m["content"].(string); ok {
-					text += c
-				}
-			}
-			if m["type"] == "assistant" {
-				text += nestedAssistantText(m)
-			}
-			if m["type"] == "result" {
-				if isErr, ok := m["is_error"].(bool); ok && isErr {
-					if r, ok := m["result"].(string); ok && r != "" {
-						return "", "", fmt.Errorf("claude error: %s", r)
-					}
-				}
-				if sid, ok := m["session_id"].(string); ok && sid != "" && sessionID == "" {
-					sessionID = sid
-				}
-				if r, ok := m["result"].(string); ok && r != "" {
-					resultText = r
-				}
-			}
-		}
-		if text == "" {
-			text = resultText
-		}
-		return text, sessionID, nil
+		return collectClaudeText(arr)
+	}
+	var obj map[string]interface{}
+	if jErr := json.Unmarshal(data, &obj); jErr == nil {
+		return collectClaudeText([]map[string]interface{}{obj})
+	}
+	if text, sessionID, ok, err := parseClaudeJSONPrefix(data); ok || err != nil {
+		return text, sessionID, err
 	}
 
 	// JSON is truncated or unparseable. Try to salvage a session_id from the
@@ -254,9 +229,73 @@ func parseClaudeJSON(data []byte, stderr string) (text, sessionID string, err er
 		detail = detail[:200] + "…"
 	}
 	if detail != "" {
-		return "", sessionID, fmt.Errorf("claude output was truncated/incomplete (stderr: %s)", detail)
+		return "", sessionID, fmt.Errorf("claude output was truncated/incomplete (stdout_bytes=%d, session_id=%s, stderr: %s)", len(data), sessionID, detail)
 	}
-	return "", sessionID, fmt.Errorf("claude output was truncated/incomplete (no stderr)")
+	return "", sessionID, fmt.Errorf("claude output was truncated/incomplete (stdout_bytes=%d, session_id=%s, no stderr)", len(data), sessionID)
+}
+
+func collectClaudeText(arr []map[string]interface{}) (text, sessionID string, err error) {
+	var resultText string
+	for _, m := range arr {
+		if m["type"] == "system" {
+			if sid, ok := m["session_id"].(string); ok && sid != "" {
+				sessionID = sid
+			}
+		}
+		if m["type"] == "text" {
+			if c, ok := m["content"].(string); ok {
+				text += c
+			}
+		}
+		if m["type"] == "assistant" {
+			text += nestedAssistantText(m)
+		}
+		if m["type"] == "result" {
+			if isErr, ok := m["is_error"].(bool); ok && isErr {
+				if r, ok := m["result"].(string); ok && r != "" {
+					return "", "", fmt.Errorf("claude error: %s", r)
+				}
+			}
+			if sid, ok := m["session_id"].(string); ok && sid != "" && sessionID == "" {
+				sessionID = sid
+			}
+			if r, ok := m["result"].(string); ok && r != "" {
+				resultText = r
+			}
+		}
+	}
+	if text == "" {
+		text = resultText
+	}
+	return text, sessionID, nil
+}
+
+func parseClaudeJSONPrefix(data []byte) (text, sessionID string, ok bool, err error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return "", "", false, nil
+	}
+	delim, ok := tok.(json.Delim)
+	if !ok || delim != '[' {
+		return "", "", false, nil
+	}
+	var arr []map[string]interface{}
+	for dec.More() {
+		var m map[string]interface{}
+		if err := dec.Decode(&m); err != nil {
+			break
+		}
+		arr = append(arr, m)
+	}
+	if len(arr) == 0 {
+		return "", "", false, nil
+	}
+	text, sessionID, err = collectClaudeText(arr)
+	if err != nil {
+		return "", "", true, err
+	}
+	return text, sessionID, text != "" || sessionID != "", nil
 }
 
 func nestedAssistantText(m map[string]interface{}) string {

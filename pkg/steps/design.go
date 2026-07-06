@@ -14,11 +14,13 @@ Your job is to transform the PRD into three implementation-ready design document
 PRD:
 {{.prd.md}}
 
-Output markdown with exactly three top-level documents separated by:
+CRITICAL FORMAT REQUIREMENT — You MUST output exactly three documents separated by these exact marker lines (each on its own line, no extra whitespace, no code fences around them):
 
 ---TOMATO-ARTIFACT: architecture.md---
 ---TOMATO-ARTIFACT: ui-spec.md---
 ---TOMATO-ARTIFACT: implementation.md---
+
+Each marker MUST appear verbatim on its own line before the corresponding document. The markers are the ONLY way the output is parsed into separate files — the response is invalid without them.
 
 Document 1: architecture.md
 Include:

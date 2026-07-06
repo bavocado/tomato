@@ -710,26 +710,160 @@ workflows:
 		t.Fatalf("workflow failed: %v", err)
 	}
 
-	archRel, _ := filepath.Rel(dir, filepath.Join(featureDir, "architecture.md"))
+	// After the workflow, tomato switches back to main. The artifact commit
+	// lives on the tomato/<feature> branch. Verify it's tracked there.
+	branches, _ := exec.Command("git", "-C", dir, "branch", "--list", "tomato/*").Output()
+	branchLine := strings.TrimSpace(string(branches))
+	if branchLine == "" {
+		t.Fatal("expected a tomato/ feature branch to exist")
+	}
+	featureBranch := strings.TrimPrefix(branchLine, "* ")
+	featureBranch = strings.TrimSpace(featureBranch)
 
-	// The docs artifact must be tracked (committed).
-	out, err := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", archRel).CombinedOutput()
+	// Check the artifact is tracked on the feature branch.
+	out, err := exec.Command("git", "-C", dir, "ls-tree", "-r", "--name-only", featureBranch).CombinedOutput()
 	if err != nil {
-		t.Fatalf("expected docs artifact committed, git says: %s", string(out))
+		t.Fatalf("listing feature branch tree: %s", string(out))
+	}
+	archRel, _ := filepath.Rel(dir, filepath.Join(featureDir, "architecture.md"))
+	if !strings.Contains(string(out), archRel) {
+		t.Errorf("expected %s tracked on feature branch %s, tree:\n%s", archRel, featureBranch, string(out))
 	}
 
-	// The unrelated file must remain untracked (NOT swept into the commit).
-	if _, err := os.Stat(filepath.Join(dir, "unrelated.txt")); err != nil {
-		t.Fatalf("unrelated file should still exist: %v", err)
-	}
-	tracked, _ := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", "unrelated.txt").Output()
-	if len(tracked) > 0 {
-		t.Errorf("unrelated.txt should NOT be committed, but it is tracked: %q", string(tracked))
+	// The unrelated file must NOT be tracked on the feature branch.
+	if strings.Contains(string(out), "unrelated.txt") {
+		t.Errorf("unrelated.txt should NOT be committed on feature branch")
 	}
 
-	// .tomato/ must never be committed.
-	tracked, _ = exec.Command("git", "-C", dir, "ls-files", ".tomato/").Output()
-	if strings.TrimSpace(string(tracked)) != "" {
-		t.Errorf(".tomato/ should NOT be committed, but tracked files: %q", string(tracked))
+	// Local main must NOT carry the artifact (it's on the feature branch).
+	mainTree, _ := exec.Command("git", "-C", dir, "ls-tree", "-r", "--name-only", "main").CombinedOutput()
+	if strings.Contains(string(mainTree), archRel) {
+		t.Errorf("artifact should NOT be on main, but it is:\n%s", string(mainTree))
 	}
+
+	// .tomato/ must never be committed on either branch.
+	if strings.Contains(string(out), ".tomato/") {
+		t.Errorf(".tomato/ should NOT be committed on feature branch")
+	}
+}
+
+// TestRunWithOptionsSwitchesToFeatureBranchAndBack verifies that:
+//   - At the start of a workflow run, tomato switches to a tomato/<feature>
+//     branch based on origin/main (not committing on local main).
+//   - After the workflow completes, tomato switches back to main and syncs
+//     to origin/main so local main stays clean.
+//   - The feature branch carries the committed artifacts.
+func TestRunWithOptionsSwitchesToFeatureBranchAndBack(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepoForEngine(t, dir)
+
+	// Add a bare remote so origin/main exists and push works.
+	bare := t.TempDir()
+	runGitCmd2(t, bare, "init", "--bare")
+	runGitCmd2(t, dir, "remote", "add", "origin", bare)
+	runGitCmd2(t, dir, "push", "-u", "origin", "main")
+
+	yamlContent := `
+workflows:
+  default:
+    steps: [alpha]
+`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	steps.Register("alpha", func(cfg *steps.StepConfig, _ []string) *model.StepResult {
+		// Must be on a tomato/ branch, NOT on main.
+		branch := currentGitBranch(t, cfg.RepoDir)
+		if !strings.HasPrefix(branch, "tomato/") {
+			t.Errorf("expected to be on tomato/ branch during workflow, got %q", branch)
+		}
+		os.MkdirAll(cfg.FeatureDir, 0755)
+		os.WriteFile(filepath.Join(cfg.FeatureDir, "architecture.md"), []byte("# arch"), 0644)
+		return &model.StepResult{StepName: "alpha", Success: true, RunID: "r-alpha"}
+	})
+
+	if err := eng.RunWithOptions("default", RunOptions{}); err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+
+	// After workflow: must be back on main.
+	branch := currentGitBranch(t, dir)
+	if branch != "main" {
+		t.Errorf("expected to be back on main after workflow, got %q", branch)
+	}
+
+	// Local main must be in sync with origin/main (no divergence).
+	localMain, _ := exec.Command("git", "-C", dir, "rev-parse", "main").Output()
+	originMain, _ := exec.Command("git", "-C", dir, "rev-parse", "origin/main").Output()
+	if strings.TrimSpace(string(localMain)) != strings.TrimSpace(string(originMain)) {
+		t.Errorf("local main (%s) should match origin/main (%s) after workflow",
+			strings.TrimSpace(string(localMain)), strings.TrimSpace(string(originMain)))
+	}
+
+	// The feature branch must exist and carry the artifact commit.
+	out, _ := exec.Command("git", "-C", dir, "branch", "--list", "tomato/*").Output()
+	if !strings.Contains(string(out), "tomato/") {
+		t.Errorf("expected a tomato/ feature branch to exist, got %q", string(out))
+	}
+}
+
+// TestRunWithOptionsStaysOnFeatureBranchOnFailure verifies that when a workflow
+// step fails, tomato does NOT switch back to main — the user stays on the
+// feature branch so they can inspect/fix.
+func TestRunWithOptionsStaysOnFeatureBranchOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepoForEngine(t, dir)
+
+	bare := t.TempDir()
+	runGitCmd2(t, bare, "init", "--bare")
+	runGitCmd2(t, dir, "remote", "add", "origin", bare)
+	runGitCmd2(t, dir, "push", "-u", "origin", "main")
+
+	yamlContent := `
+workflows:
+  default:
+    steps: [alpha, beta]
+`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	steps.Register("alpha", fakeStep(&model.StepResult{StepName: "alpha", Success: true, RunID: "r-alpha"}))
+	steps.Register("beta", fakeStep(&model.StepResult{StepName: "beta", Success: false, Error: "boom"}))
+
+	_ = eng.RunWithOptions("default", RunOptions{})
+
+	// Must stay on the feature branch, not main.
+	branch := currentGitBranch(t, dir)
+	if branch == "main" {
+		t.Error("expected to stay on feature branch after failure, but on main")
+	}
+}
+
+func runGitCmd2(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %s", strings.Join(args, " "), string(out))
+	}
+}
+
+func currentGitBranch(t *testing.T, dir string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("getting current branch: %v", err)
+	}
+	return strings.TrimSpace(string(out))
 }

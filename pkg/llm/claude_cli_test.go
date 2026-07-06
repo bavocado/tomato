@@ -143,6 +143,23 @@ func TestParseClaudeJSONExtractsNestedAssistantText(t *testing.T) {
 	}
 }
 
+func TestParseClaudeJSONExtractsTextFromTruncatedArray(t *testing.T) {
+	data := []byte(`[
+		{"type":"system","session_id":"s-1"},
+		{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}`)
+
+	text, sid, err := parseClaudeJSON(data, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "hello" {
+		t.Fatalf("expected truncated assistant text, got %q", text)
+	}
+	if sid != "s-1" {
+		t.Fatalf("expected session id s-1, got %q", sid)
+	}
+}
+
 func TestClaudeTimeoutFromEnv(t *testing.T) {
 	t.Setenv("TOMATO_CLAUDE_TIMEOUT", "2s")
 	if got := claudeTimeout(); got != 2*time.Second {

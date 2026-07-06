@@ -78,6 +78,71 @@ func TestClaudeCLIProviderPassesAnthropicEnv(t *testing.T) {
 	}
 }
 
+func TestClaudeCLIProviderStripsAmbientAnthropicEnv(t *testing.T) {
+	t.Setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "glm-5.2")
+
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "fake-claude")
+	outFile := filepath.Join(dir, "env.txt")
+	script := `#!/bin/sh
+	env | grep '^ANTHROPIC_' | sort > "` + outFile + `"
+	echo '[{"type":"system","session_id":"s-1"},{"type":"text","content":"ok"}]'
+`
+	if err := os.WriteFile(fake, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ClaudeCLIProvider{
+		ModelName:   "deepseek-v4-pro",
+		BaseURL:     "https://api.deepseek.com/anthropic",
+		AuthToken:   "deepseek-token",
+		ClaudeModel: "deepseek-v4-pro",
+		CLIPath:     fake,
+		Timeout:     5 * time.Second,
+	}
+
+	if err := p.Stream([]Message{{Role: "user", Content: "hello"}}, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if strings.Contains(content, "ANTHROPIC_DEFAULT_SONNET_MODEL") {
+		t.Fatalf("ambient Anthropic default model leaked into child env:\n%s", content)
+	}
+	for _, want := range []string{
+		"ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic",
+		"ANTHROPIC_AUTH_TOKEN=deepseek-token",
+		"ANTHROPIC_MODEL=deepseek-v4-pro",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("expected child env to contain %q, got:\n%s", want, content)
+		}
+	}
+}
+
+func TestParseClaudeJSONExtractsNestedAssistantText(t *testing.T) {
+	data := []byte(`[
+		{"type":"system","session_id":"s-1"},
+		{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"skip"},{"type":"text","text":"hello"}]}},
+		{"type":"result","is_error":false,"result":"hello","session_id":"s-1"}
+	]`)
+
+	text, sid, err := parseClaudeJSON(data, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "hello" {
+		t.Fatalf("expected nested assistant text, got %q", text)
+	}
+	if sid != "s-1" {
+		t.Fatalf("expected session id s-1, got %q", sid)
+	}
+}
+
 func TestClaudeTimeoutFromEnv(t *testing.T) {
 	t.Setenv("TOMATO_CLAUDE_TIMEOUT", "2s")
 	if got := claudeTimeout(); got != 2*time.Second {

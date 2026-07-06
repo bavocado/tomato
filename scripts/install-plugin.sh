@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# tomato plugin & codegraph installer
+# tomato plugin + codegraph + ponytail installer
 # curl -fsSL https://raw.githubusercontent.com/bavocado/tomato/main/scripts/install-plugin.sh | bash
 
 SKILL_REPO="bavocado/tomato"
@@ -52,7 +52,44 @@ install_codegraph() {
   fi
 }
 
-# ── shell profile ─────────────────────────────────────────────
+# ── ponytail ──────────────────────────────────────────────────
+
+PONYTAIL_MARKETPLACE="https://github.com/DietrichGebert/ponytail"
+
+install_ponytail() {
+  if ! command -v claude >/dev/null 2>&1; then
+    warn "claude CLI not found — skipping ponytail install"
+    warn "Install Claude Code first: npm install -g @anthropic-ai/claude-code"
+    return
+  fi
+
+  # Check if ponytail plugin already installed
+  if claude plugin list 2>/dev/null | grep -qi 'ponytail'; then
+    info "ponytail already installed"
+    return
+  fi
+
+  info "Installing ponytail (lazy senior dev mode)..."
+
+  # Add marketplace if not already configured
+  if ! claude plugin marketplace list 2>/dev/null | grep -qi 'ponytail'; then
+    info "Adding ponytail marketplace..."
+    claude plugin marketplace add ponytail "${PONYTAIL_MARKETPLACE}" 2>/dev/null || {
+      warn "Failed to add ponytail marketplace — you can add it manually:"
+      warn "  claude plugin marketplace add ponytail ${PONYTAIL_MARKETPLACE}"
+      return
+    }
+  fi
+
+  # Install the plugin
+  claude plugin install ponytail@ponytail 2>/dev/null || {
+    warn "Failed to install ponytail — you can install it manually:"
+    warn "  claude plugin install ponytail@ponytail"
+    return
+  }
+
+  info "ponytail installed — lazy senior dev mode ready"
+}
 
 shell_profile() {
   case "${SHELL:-}" in
@@ -91,19 +128,24 @@ ${end}"
 
 main() {
   echo ""
-  info "tomato plugin + codegraph installer"
+  info "tomato plugin + codegraph + ponytail installer"
   echo ""
 
   install_skill
   echo ""
   install_codegraph
   echo ""
+  install_ponytail
+  echo ""
   ensure_path
   echo ""
 
   info "Done!"
-  info "  Skill:  ${SKILL_DIR}/SKILL.md"
-  info "  Usage:  just type 'tomato run' or describe a feature in Claude Code"
+  info "  tomato:   ${SKILL_DIR}/SKILL.md"
+  info "  codegraph: $(command -v codegraph 2>/dev/null || echo '~/.local/bin/codegraph')"
+  info "  ponytail:  claude plugin list | grep ponytail"
+  info ""
+  info "  Usage: just type 'tomato run' or describe a feature in Claude Code"
 }
 
 main "$@"

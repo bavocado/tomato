@@ -83,9 +83,13 @@ func Execute(
 	cacheHit := false
 	if cache != nil {
 		if cached, ok := cache.Get(cacheKey); ok {
-			logStep(stepName, "cache hit — skipping LLM call")
-			responseText = cached
-			cacheHit = true
+			if multiOutputWithoutMarkers(cached, outputFiles) {
+				logStep(stepName, "cache entry missing artifact markers — ignoring")
+			} else {
+				logStep(stepName, "cache hit — skipping LLM call")
+				responseText = cached
+				cacheHit = true
+			}
 		}
 	}
 
@@ -117,8 +121,12 @@ func Execute(
 				Error:      errMsg,
 			}
 		}
+		missingMarkers := multiOutputWithoutMarkers(responseText, outputFiles)
+		if missingMarkers {
+			logStep(stepName, "response missing ---TOMATO-ARTIFACT--- markers for %d output file(s); writing full response to each", len(outputFiles))
+		}
 
-		if cache != nil {
+		if cache != nil && !missingMarkers {
 			if err := cache.Set(cacheKey, responseText); err != nil {
 				fmt.Fprintf(os.Stderr, "⚠  warning: failed to cache response: %v\n", err)
 			}
@@ -146,13 +154,6 @@ func Execute(
 	// Write output artifacts — support artifact splitting via ---TOMATO-ARTIFACT: filename--- markers
 	logStep(stepName, "writing %d artifact(s)", len(outputFiles))
 	artifactParts := splitArtifacts(responseText)
-	// If the response carried no artifact markers but the step expects multiple
-	// outputs, the fallback writes the ENTIRE response to every output file —
-	// silent data corruption (e.g. design's three docs would all be identical).
-	// Surface it so the user knows the model ignored the split instructions.
-	if _, unsplit := artifactParts[""]; unsplit && len(outputFiles) > 1 {
-		fmt.Fprintf(os.Stderr, "⚠  response had no ---TOMATO-ARTIFACT--- markers; writing the full response to all %d output files (expected separate artifacts)\n", len(outputFiles))
-	}
 	// Snapshot dir: a stable copy of each output lives under
 	// .tomato/runs/<run-id>/artifacts/ so `tomato history diff` can compare two
 	// runs even after the working-tree outputs change (design §3.4, Task 5).
@@ -219,6 +220,14 @@ func Execute(
 		CacheHit:   cacheHit,
 		Success:    true,
 	}
+}
+
+func multiOutputWithoutMarkers(text string, outputFiles []string) bool {
+	if len(outputFiles) <= 1 {
+		return false
+	}
+	_, unsplit := splitArtifacts(text)[""]
+	return unsplit
 }
 
 // logStep writes a concise progress line to stderr.

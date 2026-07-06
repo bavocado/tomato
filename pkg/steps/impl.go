@@ -10,6 +10,8 @@ import (
 
 var ImplPrompt = `You are tomato's implementation engineer.
 
+` + PonytailRuleset + `
+
 Implement according to the design documents below. Produce a clear, reviewable implementation plan and code-oriented output that can be applied to the repository.
 
 Architecture:

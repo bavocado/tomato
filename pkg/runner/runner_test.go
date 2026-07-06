@@ -160,6 +160,51 @@ func TestExecuteSingleOutputNoMarkers(t *testing.T) {
 	}
 }
 
+func TestExecuteMultiOutputWithoutMarkersWarnsAndProceeds(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := filepath.Join(dir, "docs", "specs", "f")
+	os.MkdirAll(featureDir, 0755)
+
+	mockLLM := func(messages []Message, onChunk func(string)) error {
+		onChunk("plain output without artifact markers")
+		return nil
+	}
+
+	result := Execute(
+		"design",
+		"test",
+		nil,
+		[]string{
+			filepath.Join(featureDir, "architecture.md"),
+			filepath.Join(featureDir, "ui-spec.md"),
+			filepath.Join(featureDir, "implementation.md"),
+		},
+		dir,
+		"gpt-5",
+		mockLLM,
+		"v1",
+		nil,
+	)
+
+	if !result.Success {
+		t.Fatalf("expected success for multi-output response without markers (should warn and proceed), got: %s", result.Error)
+	}
+	// All output files should be written with the full response.
+	for _, name := range []string{"architecture.md", "ui-spec.md", "implementation.md"} {
+		data, err := os.ReadFile(filepath.Join(featureDir, name))
+		if err != nil {
+			t.Fatalf("expected %s to be written: %v", name, err)
+		}
+		if string(data) != "plain output without artifact markers" {
+			t.Errorf("%s: expected full response, got %q", name, string(data))
+		}
+	}
+	// Verify it's not cached — a subsequent run should still call the LLM.
+	if result.CacheHit {
+		t.Error("marker-less multi-output response should not be cached")
+	}
+}
+
 func TestExecuteRecordsTokenEstimates(t *testing.T) {
 	dir := t.TempDir()
 	mockLLM := func(messages []Message, onChunk func(string)) error {
@@ -467,6 +512,58 @@ func TestExecuteCacheHitSkipsLLM(t *testing.T) {
 	data, _ := os.ReadFile(outFile)
 	if string(data) != "cached response" {
 		t.Errorf("expected cached response, got %q", string(data))
+	}
+}
+
+func TestExecuteIgnoresInvalidMultiOutputCache(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := filepath.Join(dir, "docs", "specs", "f")
+	os.MkdirAll(featureDir, 0755)
+
+	callCount := 0
+	mockLLM := func(messages []Message, onChunk func(string)) error {
+		callCount++
+		if callCount == 1 {
+			onChunk("bad cached response")
+			return nil
+		}
+		onChunk(`---TOMATO-ARTIFACT: architecture.md---
+# Architecture
+
+---TOMATO-ARTIFACT: ui-spec.md---
+# UI
+
+---TOMATO-ARTIFACT: implementation.md---
+# Impl
+`)
+		return nil
+	}
+
+	input := filepath.Join(featureDir, "prd.md")
+	outputs := []string{
+		filepath.Join(featureDir, "architecture.md"),
+		filepath.Join(featureDir, "ui-spec.md"),
+		filepath.Join(featureDir, "implementation.md"),
+	}
+	os.WriteFile(input, []byte("hello"), 0644)
+
+	first := Execute("design", "prompt {{.prd.md}}", []string{input}, outputs, dir, "glm/glm-5.2", mockLLM, "v1", nil)
+	if !first.Success {
+		t.Fatal("first response without markers should succeed (warn and write full response to each file)")
+	}
+	if first.CacheHit {
+		t.Error("marker-less multi-output response should not be cached")
+	}
+
+	second := Execute("design", "prompt {{.prd.md}}", []string{input}, outputs, dir, "glm/glm-5.2", mockLLM, "v1", nil)
+	if !second.Success {
+		t.Fatalf("second response should succeed: %s", second.Error)
+	}
+	if second.CacheHit {
+		t.Fatal("first response was not cached, so second should be a cache miss")
+	}
+	if callCount != 2 {
+		t.Fatalf("expected LLM called again (first not cached), got %d", callCount)
 	}
 }
 

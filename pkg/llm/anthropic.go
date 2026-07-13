@@ -21,13 +21,6 @@ import (
 // The prompt is passed via stdin.
 // ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL are set
 // as environment variables from the yaml config (can be overridden by env).
-//
-// When SessionID is non-empty, the provider resumes that claude session
-// (--resume <id>) so prior conversation context is reused instead of
-// re-sending the full prompt history. After Stream completes, LastSessionID
-// holds the session id of this invocation (which may differ from SessionID
-// when a new session was started) so the caller can persist it for the next
-// step.
 type ClaudeCLIProvider struct {
 	ModelName   string
 	BaseURL     string
@@ -35,7 +28,8 @@ type ClaudeCLIProvider struct {
 	ClaudeModel string
 	CLIPath     string
 	Timeout     time.Duration
-	// SessionID, when non-empty, resumes an existing claude session.
+	// SessionID is kept for compatibility with older callers. It is ignored:
+	// tomato starts every claude invocation in a fresh session.
 	SessionID string
 	// LastSessionID is set by Stream to the session id of this invocation.
 	LastSessionID string
@@ -76,9 +70,6 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 	}
 	if p.ModelName != "" {
 		args = append(args, "--model", p.ModelName)
-	}
-	if p.SessionID != "" {
-		args = append(args, "--resume", p.SessionID)
 	}
 	// When the repo has a codegraph index, mount it as an MCP server so the
 	// LLM can call codegraph_explore for surgical code context (fewer file
@@ -370,7 +361,7 @@ func buildClaudePrompt(messages []Message) string {
 
 // NewClaudeCLIProvider creates a provider that shells out to the `claude` CLI.
 // baseURL / authToken / claudeModel come from tomato.yaml's provider section.
-// sessionID, when non-empty, resumes an existing claude session.
+// sessionID is accepted for compatibility and ignored.
 // It does not require the CLI to exist until Stream is called, so config parsing
 // and unit tests work in environments where Claude Code is not installed.
 func NewClaudeCLIProvider(modelID, baseURL, authToken, claudeModel, sessionID, repoDir string) (*ClaudeCLIProvider, error) {

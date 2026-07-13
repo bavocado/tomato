@@ -42,7 +42,7 @@ func Execute(
 
 	// Build prompts from input files
 	logStep(stepName, "building prompt from %d input file(s)", len(inputFiles))
-	messages, err := buildMessages(promptTemplate, inputFiles, repoDir)
+	messages, err := buildMessages(stepName, promptTemplate, inputFiles, repoDir)
 	if err != nil {
 		return failure(stepName, runID, start, modelName, err)
 	}
@@ -274,7 +274,7 @@ func budgetExceeded(stepName, runID string, start time.Time, modelName, scope st
 	}
 }
 
-func buildMessages(promptTemplate string, inputFiles []string, repoDir string) ([]Message, error) {
+func buildMessages(stepName, promptTemplate string, inputFiles []string, repoDir string) ([]Message, error) {
 	// Read each input file, keyed by its base name. The base name is the
 	// token used in the prompt template (e.g. {{.prd.md}}).
 	//
@@ -311,9 +311,13 @@ func buildMessages(promptTemplate string, inputFiles []string, repoDir string) (
 	}
 
 	return []Message{
-		{Role: "system", Content: "You are tomato, an AI software development assistant. Output in markdown."},
+		{Role: "system", Content: systemPrompt(stepName)},
 		{Role: "user", Content: prompt},
 	}, nil
+}
+
+func systemPrompt(stepName string) string {
+	return fmt.Sprintf("You are tomato, an AI software development assistant. Output in markdown.\n\nFor this %s step, delegate the substantive work to a fresh Task subagent suited to the step. Do not rely on any prior Claude session or conversation state; use only the prompt, files, and tools available in this invocation. If CodeDB/codegraph MCP tools are available, query them for relevant code before reading broad file ranges. Return the final artifact text requested by tomato.", stepName)
 }
 
 func failure(stepName, runID string, start time.Time, modelName string, err error) *model.StepResult {

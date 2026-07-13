@@ -14,7 +14,15 @@ const installURL = "https://raw.githubusercontent.com/colbymchenry/codegraph/mai
 
 // CLIPath returns the path to the codegraph binary, or "" if not found.
 func CLIPath() string {
-	p, err := exec.LookPath("codegraph")
+	return lookPath("codegraph")
+}
+
+func CodeDBCLIPath() string {
+	return lookPath("codedb")
+}
+
+func lookPath(name string) string {
+	p, err := exec.LookPath(name)
 	if err != nil {
 		return ""
 	}
@@ -81,6 +89,25 @@ func InitIndex(repoDir string) error {
 	return nil
 }
 
+func HasCodeDBIndex(repoDir string) bool {
+	info, err := os.Stat(filepath.Join(repoDir, ".codedb"))
+	return err == nil && info.IsDir()
+}
+
+func InitCodeDBIndex(repoDir string) error {
+	bin := CodeDBCLIPath()
+	if bin == "" {
+		return fmt.Errorf("codedb not found on PATH")
+	}
+	cmd := exec.Command(bin, "init")
+	cmd.Dir = repoDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("codedb init failed: %s: %w", string(out), err)
+	}
+	return nil
+}
+
 // MCPConfig is the MCP server config structure claude --mcp-config expects.
 type MCPConfig struct {
 	McpServers map[string]McpServer `json:"mcpServers"`
@@ -98,6 +125,10 @@ type McpServer struct {
 // git-tracked). Returns ("", nil) when codegraph is not installed or the repo
 // has no .codegraph/ index, so callers can skip passing --mcp-config.
 func WriteMCPConfig(repoDir string) (string, error) {
+	if bin := CodeDBCLIPath(); bin != "" && HasCodeDBIndex(repoDir) {
+		return writeMCPConfig(repoDir, "codedb", bin, []string{"serve", "--mcp"})
+	}
+
 	bin := CLIPath()
 	if bin == "" {
 		// Fall back to the default install location so a freshly installed
@@ -111,12 +142,16 @@ func WriteMCPConfig(repoDir string) (string, error) {
 	if bin == "" || !HasIndex(repoDir) {
 		return "", nil
 	}
+	return writeMCPConfig(repoDir, "codegraph", bin, []string{"serve", "--mcp"})
+}
+
+func writeMCPConfig(repoDir, name, bin string, args []string) (string, error) {
 	cfg := MCPConfig{
 		McpServers: map[string]McpServer{
-			"codegraph": {
+			name: {
 				Type:    "stdio",
 				Command: bin,
-				Args:    []string{"serve", "--mcp"},
+				Args:    args,
 			},
 		},
 	}
@@ -124,7 +159,7 @@ func WriteMCPConfig(repoDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(repoDir, ".tomato", "codegraph-mcp.json")
+	path := filepath.Join(repoDir, ".tomato", name+"-mcp.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return "", err
 	}

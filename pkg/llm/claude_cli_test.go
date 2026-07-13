@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,6 +125,70 @@ func TestClaudeCLIProviderStripsAmbientAnthropicEnv(t *testing.T) {
 	}
 }
 
+func TestClaudeCLIProviderPrintsClaudeLogs(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "fake-claude")
+	script := `#!/bin/sh
+echo '{"type":"system","session_id":"s-1"}'
+echo '{"type":"system","session_id":"s-1","model":null}'
+echo '{"type":"system","session_id":"s-1","model":"test-model"}'
+echo '{"type":"system","session_id":"s-1","model":null}'
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"TOMATO_STEP: 1/5 inspect - reading relevant code\nignore this line\nTOMATO_STEP: 2/5 plan - choosing smallest change"}]}}'
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"printf \"one\ntwo\""}}]}}'
+printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","content":"one\ntwo\n"}]}}'
+echo 'child log line' >&2
+echo '{"type":"result","is_error":false,"result":"done","session_id":"s-1","duration_ms":12,"num_turns":1}'
+`
+	if err := os.WriteFile(fake, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+
+	p := &ClaudeCLIProvider{
+		ModelName: "test-model",
+		CLIPath:   fake,
+		Timeout:   5 * time.Second,
+	}
+
+	var got strings.Builder
+	streamErr := p.Stream([]Message{{Role: "user", Content: "hello"}}, func(chunk string) { got.WriteString(chunk) })
+	os.Stderr = oldStderr
+	w.Close()
+	logData, _ := io.ReadAll(r)
+	r.Close()
+	if streamErr != nil {
+		t.Fatal(streamErr)
+	}
+	logs := string(logData)
+	for _, want := range []string{
+		"child log line",
+		"[claude]\n  step:\n    1/5 inspect - reading relevant code",
+		"[claude]\n  step:\n    2/5 plan - choosing smallest change",
+		"[claude]\n  tool: Bash\n  command:\n    printf \"one\n    two\"",
+		"[claude]\n  tool_result: ok\n  output:\n    one\n    two\n    ",
+		"done turns=1",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected live logs to contain %q, got:\n%s", want, logs)
+		}
+	}
+	if strings.Contains(logs, "model=<nil>") {
+		t.Fatalf("expected nil model system events to be hidden, got:\n%s", logs)
+	}
+	if strings.Count(logs, "session=s-1") != 1 {
+		t.Fatalf("expected session to be printed once, got:\n%s", logs)
+	}
+	if got.String() != "done" {
+		t.Fatalf("expected final result, got %q", got.String())
+	}
+}
+
 func TestParseClaudeJSONExtractsNestedAssistantText(t *testing.T) {
 	data := []byte(`[
 		{"type":"system","session_id":"s-1"},
@@ -174,10 +239,9 @@ func TestClaudeTimeoutDefault(t *testing.T) {
 	}
 }
 
-// TestClaudeCLIProviderResumesSession verifies that when SessionID is set, the
-// --resume flag is passed to claude, and LastSessionID is populated from the
-// JSON output so the caller can persist it.
-func TestClaudeCLIProviderResumesSession(t *testing.T) {
+// TestClaudeCLIProviderIgnoresSessionID verifies tomato starts each claude
+// invocation fresh even if an old caller still passes SessionID.
+func TestClaudeCLIProviderIgnoresSessionID(t *testing.T) {
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "fake-claude")
 	argFile := filepath.Join(dir, "args.txt")
@@ -203,8 +267,8 @@ func TestClaudeCLIProviderResumesSession(t *testing.T) {
 
 	args, _ := os.ReadFile(argFile)
 	argsStr := string(args)
-	if !strings.Contains(argsStr, "--resume") || !strings.Contains(argsStr, "prior-session-abc") {
-		t.Errorf("expected --resume prior-session-abc in args, got %q", argsStr)
+	if strings.Contains(argsStr, "--resume") || strings.Contains(argsStr, "prior-session-abc") {
+		t.Errorf("expected no session resume args, got %q", argsStr)
 	}
 	if p.LastSessionID != "new-session-xyz" {
 		t.Errorf("expected LastSessionID=new-session-xyz, got %q", p.LastSessionID)

@@ -120,6 +120,7 @@ type RunOptions struct {
 	From   string
 	Resume bool
 	Force  bool
+	Fast   bool
 }
 
 // Run executes a named workflow step by step.
@@ -151,14 +152,27 @@ func (e *Engine) planStepsChecked(workflowName string, opts RunOptions) ([]confi
 		opts.From = s.FailedStep
 	}
 	if opts.From == "" {
-		return wf.Steps, nil
+		return fastSteps(wf.Steps, opts.Fast), nil
 	}
 	for i, s := range wf.Steps {
 		if s.Name == opts.From {
-			return wf.Steps[i:], nil
+			return fastSteps(wf.Steps[i:], opts.Fast), nil
 		}
 	}
 	return nil, fmt.Errorf("--from step %q not found in workflow %q", opts.From, workflowName)
+}
+
+func fastSteps(in []config.WorkflowStep, fast bool) []config.WorkflowStep {
+	if !fast {
+		return in
+	}
+	out := []config.WorkflowStep{{Name: "fast"}}
+	for _, s := range in {
+		if s.Name == "pr" {
+			return append(out, config.WorkflowStep{Name: "pr"})
+		}
+	}
+	return out
 }
 
 func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
@@ -167,9 +181,8 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 		return err
 	}
 
-	// Start each run with a fresh claude session so context from a prior run
-	// does not leak in. --resume within the run reuses this session across
-	// every LLM step (design §2.9 — shared session for cross-step context).
+	// Clear any legacy claude session file so no step can accidentally resume
+	// stale context. Each LLM step now starts its own fresh claude invocation.
 	if !opts.Resume {
 		llm.ClearSession(e.RepoDir)
 	}
@@ -227,6 +240,11 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 		if err := steps.CommitFeatureArtifacts(e.RepoDir, featureDir, e.Feature, stepCfg.Name); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit feature artifacts: %v\n", err)
 		}
+		if stepCfg.Name == "fast" {
+			if err := steps.CommitAllChanges(e.RepoDir, e.Feature, stepCfg.Name); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit fast-mode changes: %v\n", err)
+			}
+		}
 
 		completed = append(completed, stepCfg.Name)
 		if saveErr := state.Save(e.RepoDir, state.WorkflowState{
@@ -251,12 +269,14 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 			} else {
 				fmt.Printf("📦 design trio archived to v%d/\n", ver)
 			}
-			if e.Config.Impl.RewriteArchEnabled() {
+			if e.Config.Impl.RewriteArchEnabled() && !opts.Fast {
 				if err := e.rewriteArchitecture(featureDir); err != nil {
 					fmt.Fprintf(os.Stderr, "⚠  warning: failed to rewrite architecture.md: %v\n", err)
 				} else {
 					fmt.Printf("🔄 architecture.md rewritten to reflect real implementation\n")
 				}
+			} else if opts.Fast {
+				fmt.Printf("⚡ fast mode: skipped architecture rewrite\n")
 			}
 		}
 
@@ -318,7 +338,7 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 	prRef := steps.ReadPRRef(featureDir).PRRef
 
 	for round := 1; round <= maxRounds+1; round++ {
-			reviewCfg := e.stepConfig(featureDir, e.Feature, "review")
+		reviewCfg := e.stepConfig(featureDir, e.Feature, "review")
 
 		fmt.Printf("  review round %d...\n", round)
 		result := reviewFn(reviewCfg, []string{fmt.Sprintf("r%d", round)})
@@ -353,7 +373,7 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 
 		if round <= maxRounds {
 			fmt.Printf("  → round %d found blocking issues, fixing...\n", round)
-				implCfg := e.stepConfig(featureDir, e.Feature, "impl")
+			implCfg := e.stepConfig(featureDir, e.Feature, "impl")
 			fixResult := implFn(implCfg, []string{fmt.Sprintf("fix-r%d", round)})
 			if !fixResult.Success {
 				return fmt.Errorf("fix round %d failed: %s", round, fixResult.Error)

@@ -22,8 +22,7 @@ type ProviderConfig struct {
 	AuthToken string // passed to claude as ANTHROPIC_AUTH_TOKEN
 	Model     string // passed to claude as ANTHROPIC_MODEL
 
-	// SessionID, when non-empty, resumes an existing claude CLI session so
-	// prior conversation context is reused across steps in one workflow run.
+	// Deprecated: ignored. Claude CLI invocations always start fresh.
 	SessionID string
 
 	// RepoDir is the project root. When it contains a .codegraph/ index, the

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -21,13 +22,6 @@ import (
 // The prompt is passed via stdin.
 // ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL are set
 // as environment variables from the yaml config (can be overridden by env).
-//
-// When SessionID is non-empty, the provider resumes that claude session
-// (--resume <id>) so prior conversation context is reused instead of
-// re-sending the full prompt history. After Stream completes, LastSessionID
-// holds the session id of this invocation (which may differ from SessionID
-// when a new session was started) so the caller can persist it for the next
-// step.
 type ClaudeCLIProvider struct {
 	ModelName   string
 	BaseURL     string
@@ -35,7 +29,8 @@ type ClaudeCLIProvider struct {
 	ClaudeModel string
 	CLIPath     string
 	Timeout     time.Duration
-	// SessionID, when non-empty, resumes an existing claude session.
+	// SessionID is kept for compatibility with older callers. It is ignored:
+	// tomato starts every claude invocation in a fresh session.
 	SessionID string
 	// LastSessionID is set by Stream to the session id of this invocation.
 	LastSessionID string
@@ -72,13 +67,11 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 		"--print",
 		"--permission-mode", "auto",
 		"--effort", "high",
-		"--output-format", "json",
+		"--output-format", "stream-json",
+		"--verbose",
 	}
 	if p.ModelName != "" {
 		args = append(args, "--model", p.ModelName)
-	}
-	if p.SessionID != "" {
-		args = append(args, "--resume", p.SessionID)
 	}
 	// When the repo has a codegraph index, mount it as an MCP server so the
 	// LLM can call codegraph_explore for surgical code context (fewer file
@@ -123,30 +116,53 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 	}
 	cmd.Env = clean
 
-	var stdout, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderrBuf
-
 	fmt.Fprintf(os.Stderr, "[claude] command=%s %s timeout=%s\n", cliPath, strings.Join(args, " "), p.effectiveTimeout())
 
-	// Run claude to completion. JSON output cannot be streamed incrementally
-	// (the full array must be parseable), so we wait for the process to exit
-	// and then parse.
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	var stderrBuf bytes.Buffer
+	stderrDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.MultiWriter(os.Stderr, &stderrBuf), stderrPipe)
+		stderrDone <- err
+	}()
+
+	var stdout bytes.Buffer
+	var events []map[string]interface{}
+	stdoutDone := make(chan error, 1)
+	go func() {
+		events, err = readClaudeStream(io.TeeReader(stdoutPipe, &stdout), &claudeLogState{})
+		stdoutDone <- err
+	}()
+
 	waitDone := make(chan error, 1)
 	go func() {
-		waitDone <- cmd.Run()
+		waitDone <- cmd.Wait()
 	}()
 
 	select {
 	case waitErr := <-waitDone:
+		<-stderrDone
+		decodeErr := <-stdoutDone
 		if waitErr != nil {
 			// Even on non-zero exit, claude may have written a JSON array to
 			// stdout containing a "result" entry with is_error=true (e.g. API
 			// 429 quota exceeded). Try to parse it for a better error message
 			// before falling back to the generic exit error.
 			stderrStr := strings.TrimSpace(stderrBuf.String())
-			if stdout.Len() > 0 {
-				if text, sid, perr := parseClaudeJSON(stdout.Bytes(), stderrStr); perr == nil {
+			if len(events) > 0 || stdout.Len() > 0 {
+				if text, sid, perr := parseClaudeOutput(events, stdout.Bytes(), stderrStr, decodeErr); perr == nil {
 					if sid != "" {
 						p.LastSessionID = sid
 					}
@@ -174,11 +190,13 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 		// make/go build) don't survive the timeout.
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		<-waitDone
+		<-stderrDone
+		<-stdoutDone
 		return fmt.Errorf("claude timed out after %s", p.effectiveTimeout())
 	}
 
 	// Parse the JSON array and extract the session id + text content.
-	text, sid, err := parseClaudeJSON(stdout.Bytes(), stderrBuf.String())
+	text, sid, err := parseClaudeOutput(events, stdout.Bytes(), stderrBuf.String(), nil)
 	if err != nil {
 		return err
 	}
@@ -189,6 +207,169 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 		onChunk(text)
 	}
 	return nil
+}
+
+func readClaudeStream(r io.Reader, logs *claudeLogState) ([]map[string]interface{}, error) {
+	dec := json.NewDecoder(r)
+	var events []map[string]interface{}
+	for {
+		var v interface{}
+		if err := dec.Decode(&v); err != nil {
+			if err == io.EOF {
+				return events, nil
+			}
+			return events, err
+		}
+		switch x := v.(type) {
+		case map[string]interface{}:
+			events = append(events, x)
+			logs.log(x)
+		case []interface{}:
+			for _, item := range x {
+				if m, ok := item.(map[string]interface{}); ok {
+					events = append(events, m)
+					logs.log(m)
+				}
+			}
+		}
+	}
+}
+
+func parseClaudeOutput(events []map[string]interface{}, stdout []byte, stderr string, streamErr error) (string, string, error) {
+	if streamErr == nil && len(events) > 0 {
+		return collectClaudeText(events)
+	}
+	if len(stdout) > 0 {
+		return parseClaudeJSON(stdout, stderr)
+	}
+	if streamErr != nil {
+		return "", "", streamErr
+	}
+	return "", "", nil
+}
+
+type claudeLogState struct {
+	printedSession bool
+}
+
+func (s *claudeLogState) log(m map[string]interface{}) {
+	switch m["type"] {
+	case "system":
+		model, _ := m["model"].(string)
+		if model == "" || s.printedSession {
+			return
+		}
+		s.printedSession = true
+		fmt.Fprintf(os.Stderr, "[claude] session=%v model=%s\n", m["session_id"], model)
+	case "assistant":
+		logClaudeAssistant(m)
+	case "user":
+		logClaudeUser(m)
+	case "result":
+		fmt.Fprintf(os.Stderr, "[claude] done turns=%v duration_ms=%v\n", m["num_turns"], m["duration_ms"])
+	}
+}
+
+func logClaudeAssistant(m map[string]interface{}) {
+	msg, ok := m["message"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	items, ok := msg["content"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, item := range items {
+		part, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if part["type"] == "text" {
+			logClaudeStepText(part)
+			continue
+		}
+		if part["type"] != "tool_use" {
+			continue
+		}
+		name, _ := part["name"].(string)
+		input, _ := part["input"].(map[string]interface{})
+		fmt.Fprintf(os.Stderr, "[claude]\n  tool: %s\n", name)
+		if command, _ := input["command"].(string); command != "" {
+			writeClaudeLogBlock("command", command)
+			continue
+		}
+		if len(input) > 0 {
+			data, _ := json.MarshalIndent(input, "", "  ")
+			writeClaudeLogBlock("input", string(data))
+		}
+	}
+}
+
+func logClaudeStepText(part map[string]interface{}) {
+	text, _ := part["text"].(string)
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "TOMATO_STEP:") {
+			fmt.Fprintln(os.Stderr, "[claude]")
+			writeClaudeLogBlock("step", strings.TrimSpace(strings.TrimPrefix(line, "TOMATO_STEP:")))
+		}
+	}
+}
+
+func logClaudeUser(m map[string]interface{}) {
+	msg, ok := m["message"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	items, ok := msg["content"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, item := range items {
+		part, ok := item.(map[string]interface{})
+		if !ok || part["type"] != "tool_result" {
+			continue
+		}
+		status := "ok"
+		if isErr, _ := part["is_error"].(bool); isErr {
+			status = "error"
+		}
+		fmt.Fprintf(os.Stderr, "[claude]\n  tool_result: %s\n", status)
+		writeClaudeLogBlock("output", claudeToolResultContent(part["content"]))
+	}
+}
+
+func claudeToolResultContent(v interface{}) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case []interface{}:
+		var b strings.Builder
+		for _, item := range x {
+			part, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if text, _ := part["text"].(string); text != "" {
+				b.WriteString(text)
+			}
+		}
+		return b.String()
+	default:
+		data, _ := json.MarshalIndent(v, "", "  ")
+		return string(data)
+	}
+}
+
+func writeClaudeLogBlock(label, text string) {
+	fmt.Fprintf(os.Stderr, "  %s:\n", label)
+	if text == "" {
+		fmt.Fprintln(os.Stderr, "    <empty>")
+		return
+	}
+	for _, line := range strings.Split(text, "\n") {
+		fmt.Fprintf(os.Stderr, "    %s\n", line)
+	}
 }
 
 // parseClaudeJSON extracts the assistant text and session id from claude's
@@ -264,7 +445,7 @@ func collectClaudeText(arr []map[string]interface{}) (text, sessionID string, er
 			}
 		}
 	}
-	if text == "" {
+	if resultText != "" {
 		text = resultText
 	}
 	return text, sessionID, nil
@@ -370,7 +551,7 @@ func buildClaudePrompt(messages []Message) string {
 
 // NewClaudeCLIProvider creates a provider that shells out to the `claude` CLI.
 // baseURL / authToken / claudeModel come from tomato.yaml's provider section.
-// sessionID, when non-empty, resumes an existing claude session.
+// sessionID is accepted for compatibility and ignored.
 // It does not require the CLI to exist until Stream is called, so config parsing
 // and unit tests work in environments where Claude Code is not installed.
 func NewClaudeCLIProvider(modelID, baseURL, authToken, claudeModel, sessionID, repoDir string) (*ClaudeCLIProvider, error) {

@@ -376,6 +376,34 @@ workflows:
 	}
 }
 
+func TestRunOptionsFastUsesSingleFastStep(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `
+workflows:
+  default:
+    steps:
+      - design
+      - pr
+      - review_loop: { max_rounds: 3, on_fail: stop }
+      - test
+`
+	os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(yamlContent), 0644)
+	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
+
+	eng, err := NewEngine(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	steps := eng.planSteps("default", RunOptions{Fast: true})
+	if len(steps) != 2 {
+		t.Fatalf("expected 2 steps, got %#v", steps)
+	}
+	if steps[0].Name != "fast" || steps[1].Name != "pr" {
+		t.Fatalf("unexpected fast plan: %#v", steps)
+	}
+}
+
 func TestRunOptionsFromUnknownStep(t *testing.T) {
 	dir := t.TempDir()
 	yamlContent := `workflows: { default: { steps: [spec, design] } }`

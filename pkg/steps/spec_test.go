@@ -75,7 +75,7 @@ func TestRewriteArchPrompt(t *testing.T) {
 }
 
 func TestStepRegistration(t *testing.T) {
-	for _, name := range []string{"spec", "design", "impl", "review", "test"} {
+	for _, name := range []string{"spec", "design", "impl", "review", "test", "fast"} {
 		fn, err := Get(name)
 		if err != nil {
 			t.Fatalf("expected %s step to be registered: %v", name, err)

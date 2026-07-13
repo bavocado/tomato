@@ -353,6 +353,37 @@ func TestExecuteInjectsMissingInputAsEmpty(t *testing.T) {
 	}
 }
 
+func TestExecuteAddsSubagentInstruction(t *testing.T) {
+	dir := t.TempDir()
+	var systemPrompt string
+	mockLLM := func(messages []Message, onChunk func(string)) error {
+		systemPrompt = messages[0].Content
+		onChunk("out")
+		return nil
+	}
+
+	result := Execute(
+		"design",
+		"test prompt",
+		nil,
+		[]string{filepath.Join(dir, "out.md")},
+		dir,
+		"gpt-5",
+		mockLLM,
+		"v1",
+		nil,
+	)
+	if !result.Success {
+		t.Fatalf("step failed: %s", result.Error)
+	}
+	if !strings.Contains(systemPrompt, "Task subagent") {
+		t.Fatalf("system prompt should instruct Claude to use a Task subagent, got %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "design") {
+		t.Fatalf("system prompt should name the step, got %q", systemPrompt)
+	}
+}
+
 // runWithBudget runs an Execute with a per-step budget that the prompt exceeds,
 // under the given on_exceed policy. The LLM is only invoked when the step
 // proceeds.

@@ -63,12 +63,19 @@ func NewInitCmd() *cobra.Command {
 				fmt.Printf("✓ CLAUDE.md already contains Karpathy guidelines (skipped)\n")
 			}
 
-			// Build a codegraph index when the CLI is installed, so LLM steps
-			// can query the code knowledge graph via MCP during tomato run.
-			// Auto-install codegraph when it is missing. Set
+			// Build a CodeDB/codegraph index when available, so LLM steps can
+			// query code context via MCP during tomato run. Set
 			// TOMATO_SKIP_CODEGRAPH=1 to skip (used by tests).
 			if os.Getenv("TOMATO_SKIP_CODEGRAPH") == "1" {
 				// skip codegraph entirely
+			} else if codegraph.CodeDBCLIPath() != "" {
+				if codegraph.HasCodeDBIndex(dir) {
+					fmt.Printf("✓ codedb index already exists in %s\n", dir)
+				} else if err := codegraph.InitCodeDBIndex(dir); err != nil {
+					fmt.Fprintf(os.Stderr, "⚠  warning: codedb init failed: %v\n", err)
+				} else {
+					fmt.Printf("✓ Built codedb index (.codedb/)\n")
+				}
 			} else {
 				cgBin, wasInstalled, err := codegraph.EnsureCLI()
 				if err != nil {
@@ -168,11 +175,12 @@ func NewRunCmd() *cobra.Command {
 			eng.Feature = steps.ResolveFeature(flagFeature, eng.Config.Feature, dir)
 			from, _ := cmd.Flags().GetString("from")
 			resume, _ := cmd.Flags().GetBool("resume")
+			fast, _ := cmd.Flags().GetBool("fast")
 			workflowName := "default"
 			if len(args) > 0 {
 				workflowName = args[0]
 			}
-			if err := eng.RunWithOptions(workflowName, engine.RunOptions{From: from, Resume: resume}); err != nil {
+			if err := eng.RunWithOptions(workflowName, engine.RunOptions{From: from, Resume: resume, Fast: fast}); err != nil {
 				fmt.Fprintf(os.Stderr, "✗ workflow %q failed: %v\n", workflowName, err)
 				os.Exit(1)
 			}
@@ -183,6 +191,7 @@ func NewRunCmd() *cobra.Command {
 	addFeatureFlag(cmd)
 	cmd.Flags().String("from", "", "start workflow from the named step")
 	cmd.Flags().Bool("resume", false, "resume from the last failed step")
+	cmd.Flags().Bool("fast", false, "run as one Claude Code pass with tests")
 	return cmd
 }
 

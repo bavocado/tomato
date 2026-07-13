@@ -76,6 +76,27 @@ func TestWriteMCPConfigCreatesFile(t *testing.T) {
 	}
 }
 
+func TestWriteMCPConfigPrefersCodeDB(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".codedb"), 0755)
+	os.MkdirAll(filepath.Join(dir, ".codegraph"), 0755)
+	fakeBin := filepath.Join(dir, "fakebin")
+	os.MkdirAll(fakeBin, 0755)
+	os.WriteFile(filepath.Join(fakeBin, "codedb"), []byte("#!/bin/sh\nexit 0\n"), 0755)
+	os.WriteFile(filepath.Join(fakeBin, "codegraph"), []byte("#!/bin/sh\nexit 0\n"), 0755)
+	t.Setenv("PATH", fakeBin)
+
+	path, err := WriteMCPConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if !contains(content, `"codedb"`) || contains(content, `"codegraph"`) {
+		t.Fatalf("expected codedb-only MCP config, got %s", content)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

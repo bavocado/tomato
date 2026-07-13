@@ -2,7 +2,6 @@ package steps
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -55,41 +54,29 @@ func Get(name string) (StepFunc, error) {
 	return fn, nil
 }
 
-// NewLLMStream creates a streaming function from a StepConfig (supports all providers).
-// It transparently resumes the run-scoped claude session: before the call it
-// loads any persisted session id from .tomato/session.json and passes it to the
-// provider; after the call it persists the session id the provider reports so
-// the next LLM step in the same run can resume it.
+// NewLLMStream creates a streaming function from a StepConfig.
+// Each call starts a fresh claude invocation; tomato does not resume or persist
+// claude sessions between workflow steps.
 func NewLLMStream(cfg *StepConfig) runner.LLMFunc {
 	return func(messages []runner.Message, onChunk func(string)) error {
+		_ = llm.ClearSession(cfg.RepoDir)
 		llmMessages := make([]llm.Message, len(messages))
 		for i, m := range messages {
 			llmMessages[i] = llm.Message{Role: m.Role, Content: m.Content}
 		}
-		// Resume the run-scoped session when one exists.
-		session := llm.LoadSession(cfg.RepoDir)
+
 		provider, err := llm.NewProvider(llm.ProviderConfig{
 			ModelID:   cfg.ModelName,
 			APIKey:    cfg.APIKey,
 			BaseURL:   cfg.AnthropicURL,
 			AuthToken: cfg.AnthropicKey,
 			Model:     cfg.AnthropicModel,
-			SessionID: session.SessionID,
 			RepoDir:   cfg.RepoDir,
 		})
 		if err != nil {
 			return err
 		}
-		if err := provider.Stream(llmMessages, onChunk); err != nil {
-			return err
-		}
-		// Persist the session id for the next step.
-		if cli, ok := provider.(*llm.ClaudeCLIProvider); ok && cli.LastSessionID != "" {
-			if saveErr := llm.SaveSession(cfg.RepoDir, llm.SessionRef{SessionID: cli.LastSessionID}); saveErr != nil {
-				fmt.Fprintf(os.Stderr, "⚠  warning: failed to persist session: %v\n", saveErr)
-			}
-		}
-		return nil
+		return provider.Stream(llmMessages, onChunk)
 	}
 }
 

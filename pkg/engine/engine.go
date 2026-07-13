@@ -166,7 +166,13 @@ func fastSteps(in []config.WorkflowStep, fast bool) []config.WorkflowStep {
 	if !fast {
 		return in
 	}
-	return []config.WorkflowStep{{Name: "fast"}}
+	out := []config.WorkflowStep{{Name: "fast"}}
+	for _, s := range in {
+		if s.Name == "pr" {
+			return append(out, config.WorkflowStep{Name: "pr"})
+		}
+	}
+	return out
 }
 
 func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {

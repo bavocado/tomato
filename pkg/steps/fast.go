@@ -32,12 +32,23 @@ Do this in one pass:
 4. Fix failures you caused.
 5. Return a short markdown report.
 
+Before each phase, emit one short progress line exactly like:
+TOMATO_STEP: 1/5 inspect - reading relevant code
+
+Use these phase names:
+- inspect
+- plan
+- implement
+- test
+- summarize
+
 Rules:
 - Do not run "tomato run" or spawn another tomato workflow.
 - Keep the change minimal.
 - Tests are required unless the change is documentation-only; say exactly what ran.
 - If CodeDB/codegraph MCP tools are available, query them before broad file reads.
 - Use Claude Code's internal task/todo tools if helpful, but keep this as one tomato LLM call.
+- Do not create the PR yourself; tomato will run its PR step after this fast step.
 
 Output markdown with this exact structure:
 

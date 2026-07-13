@@ -129,8 +129,13 @@ func TestClaudeCLIProviderPrintsClaudeLogs(t *testing.T) {
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "fake-claude")
 	script := `#!/bin/sh
+echo '{"type":"system","session_id":"s-1"}'
+echo '{"type":"system","session_id":"s-1","model":null}'
 echo '{"type":"system","session_id":"s-1","model":"test-model"}'
-echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}}]}}'
+echo '{"type":"system","session_id":"s-1","model":null}'
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"TOMATO_STEP: 1/5 inspect - reading relevant code\nignore this line\nTOMATO_STEP: 2/5 plan - choosing smallest change"}]}}'
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"printf \"one\ntwo\""}}]}}'
+printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","content":"one\ntwo\n"}]}}'
 echo 'child log line' >&2
 echo '{"type":"result","is_error":false,"result":"done","session_id":"s-1","duration_ms":12,"num_turns":1}'
 `
@@ -161,10 +166,23 @@ echo '{"type":"result","is_error":false,"result":"done","session_id":"s-1","dura
 		t.Fatal(streamErr)
 	}
 	logs := string(logData)
-	for _, want := range []string{"child log line", "tool Bash: go test ./...", "done turns=1"} {
+	for _, want := range []string{
+		"child log line",
+		"[claude]\n  step:\n    1/5 inspect - reading relevant code",
+		"[claude]\n  step:\n    2/5 plan - choosing smallest change",
+		"[claude]\n  tool: Bash\n  command:\n    printf \"one\n    two\"",
+		"[claude]\n  tool_result: ok\n  output:\n    one\n    two\n    ",
+		"done turns=1",
+	} {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("expected live logs to contain %q, got:\n%s", want, logs)
 		}
+	}
+	if strings.Contains(logs, "model=<nil>") {
+		t.Fatalf("expected nil model system events to be hidden, got:\n%s", logs)
+	}
+	if strings.Count(logs, "session=s-1") != 1 {
+		t.Fatalf("expected session to be printed once, got:\n%s", logs)
 	}
 	if got.String() != "done" {
 		t.Fatalf("expected final result, got %q", got.String())

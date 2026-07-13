@@ -383,6 +383,7 @@ workflows:
   default:
     steps:
       - design
+      - pr
       - review_loop: { max_rounds: 3, on_fail: stop }
       - test
 `
@@ -395,10 +396,10 @@ workflows:
 	}
 
 	steps := eng.planSteps("default", RunOptions{Fast: true})
-	if len(steps) != 1 {
-		t.Fatalf("expected 1 step, got %#v", steps)
+	if len(steps) != 2 {
+		t.Fatalf("expected 2 steps, got %#v", steps)
 	}
-	if steps[0].Name != "fast" {
+	if steps[0].Name != "fast" || steps[1].Name != "pr" {
 		t.Fatalf("unexpected fast plan: %#v", steps)
 	}
 }

@@ -142,7 +142,7 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 	var events []map[string]interface{}
 	stdoutDone := make(chan error, 1)
 	go func() {
-		events, err = readClaudeStream(io.TeeReader(stdoutPipe, &stdout))
+		events, err = readClaudeStream(io.TeeReader(stdoutPipe, &stdout), &claudeLogState{})
 		stdoutDone <- err
 	}()
 
@@ -209,7 +209,7 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 	return nil
 }
 
-func readClaudeStream(r io.Reader) ([]map[string]interface{}, error) {
+func readClaudeStream(r io.Reader, logs *claudeLogState) ([]map[string]interface{}, error) {
 	dec := json.NewDecoder(r)
 	var events []map[string]interface{}
 	for {
@@ -223,12 +223,12 @@ func readClaudeStream(r io.Reader) ([]map[string]interface{}, error) {
 		switch x := v.(type) {
 		case map[string]interface{}:
 			events = append(events, x)
-			logClaudeEvent(x)
+			logs.log(x)
 		case []interface{}:
 			for _, item := range x {
 				if m, ok := item.(map[string]interface{}); ok {
 					events = append(events, m)
-					logClaudeEvent(m)
+					logs.log(m)
 				}
 			}
 		}
@@ -248,12 +248,23 @@ func parseClaudeOutput(events []map[string]interface{}, stdout []byte, stderr st
 	return "", "", nil
 }
 
-func logClaudeEvent(m map[string]interface{}) {
+type claudeLogState struct {
+	printedSession bool
+}
+
+func (s *claudeLogState) log(m map[string]interface{}) {
 	switch m["type"] {
 	case "system":
-		fmt.Fprintf(os.Stderr, "[claude] session=%v model=%v\n", m["session_id"], m["model"])
+		model, _ := m["model"].(string)
+		if model == "" || s.printedSession {
+			return
+		}
+		s.printedSession = true
+		fmt.Fprintf(os.Stderr, "[claude] session=%v model=%s\n", m["session_id"], model)
 	case "assistant":
 		logClaudeAssistant(m)
+	case "user":
+		logClaudeUser(m)
 	case "result":
 		fmt.Fprintf(os.Stderr, "[claude] done turns=%v duration_ms=%v\n", m["num_turns"], m["duration_ms"])
 	}
@@ -270,16 +281,94 @@ func logClaudeAssistant(m map[string]interface{}) {
 	}
 	for _, item := range items {
 		part, ok := item.(map[string]interface{})
-		if !ok || part["type"] != "tool_use" {
+		if !ok {
+			continue
+		}
+		if part["type"] == "text" {
+			logClaudeStepText(part)
+			continue
+		}
+		if part["type"] != "tool_use" {
 			continue
 		}
 		name, _ := part["name"].(string)
 		input, _ := part["input"].(map[string]interface{})
-		detail := ""
+		fmt.Fprintf(os.Stderr, "[claude]\n  tool: %s\n", name)
 		if command, _ := input["command"].(string); command != "" {
-			detail = ": " + command
+			writeClaudeLogBlock("command", command)
+			continue
 		}
-		fmt.Fprintf(os.Stderr, "[claude] tool %s%s\n", name, detail)
+		if len(input) > 0 {
+			data, _ := json.MarshalIndent(input, "", "  ")
+			writeClaudeLogBlock("input", string(data))
+		}
+	}
+}
+
+func logClaudeStepText(part map[string]interface{}) {
+	text, _ := part["text"].(string)
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "TOMATO_STEP:") {
+			fmt.Fprintln(os.Stderr, "[claude]")
+			writeClaudeLogBlock("step", strings.TrimSpace(strings.TrimPrefix(line, "TOMATO_STEP:")))
+		}
+	}
+}
+
+func logClaudeUser(m map[string]interface{}) {
+	msg, ok := m["message"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	items, ok := msg["content"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, item := range items {
+		part, ok := item.(map[string]interface{})
+		if !ok || part["type"] != "tool_result" {
+			continue
+		}
+		status := "ok"
+		if isErr, _ := part["is_error"].(bool); isErr {
+			status = "error"
+		}
+		fmt.Fprintf(os.Stderr, "[claude]\n  tool_result: %s\n", status)
+		writeClaudeLogBlock("output", claudeToolResultContent(part["content"]))
+	}
+}
+
+func claudeToolResultContent(v interface{}) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case []interface{}:
+		var b strings.Builder
+		for _, item := range x {
+			part, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if text, _ := part["text"].(string); text != "" {
+				b.WriteString(text)
+			}
+		}
+		return b.String()
+	default:
+		data, _ := json.MarshalIndent(v, "", "  ")
+		return string(data)
+	}
+}
+
+func writeClaudeLogBlock(label, text string) {
+	fmt.Fprintf(os.Stderr, "  %s:\n", label)
+	if text == "" {
+		fmt.Fprintln(os.Stderr, "    <empty>")
+		return
+	}
+	for _, line := range strings.Split(text, "\n") {
+		fmt.Fprintf(os.Stderr, "    %s\n", line)
 	}
 }
 
@@ -356,7 +445,7 @@ func collectClaudeText(arr []map[string]interface{}) (text, sessionID string, er
 			}
 		}
 	}
-	if text == "" {
+	if resultText != "" {
 		text = resultText
 	}
 	return text, sessionID, nil

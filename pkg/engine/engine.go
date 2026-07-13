@@ -166,17 +166,7 @@ func fastSteps(in []config.WorkflowStep, fast bool) []config.WorkflowStep {
 	if !fast {
 		return in
 	}
-	out := make([]config.WorkflowStep, 0, len(in))
-	for _, s := range in {
-		if s.Name == "test" {
-			continue
-		}
-		if s.Name == "review_loop" && s.MaxRounds > 1 {
-			s.MaxRounds = 1
-		}
-		out = append(out, s)
-	}
-	return out
+	return []config.WorkflowStep{{Name: "fast"}}
 }
 
 func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
@@ -243,6 +233,11 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 		// Best-effort: a failed commit is a warning, never a step failure.
 		if err := steps.CommitFeatureArtifacts(e.RepoDir, featureDir, e.Feature, stepCfg.Name); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit feature artifacts: %v\n", err)
+		}
+		if stepCfg.Name == "fast" {
+			if err := steps.CommitAllChanges(e.RepoDir, e.Feature, stepCfg.Name); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit fast-mode changes: %v\n", err)
+			}
 		}
 
 		completed = append(completed, stepCfg.Name)

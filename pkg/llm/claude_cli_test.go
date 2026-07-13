@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,6 +122,52 @@ func TestClaudeCLIProviderStripsAmbientAnthropicEnv(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Fatalf("expected child env to contain %q, got:\n%s", want, content)
 		}
+	}
+}
+
+func TestClaudeCLIProviderPrintsClaudeLogs(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "fake-claude")
+	script := `#!/bin/sh
+echo '{"type":"system","session_id":"s-1","model":"test-model"}'
+echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}}]}}'
+echo 'child log line' >&2
+echo '{"type":"result","is_error":false,"result":"done","session_id":"s-1","duration_ms":12,"num_turns":1}'
+`
+	if err := os.WriteFile(fake, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+
+	p := &ClaudeCLIProvider{
+		ModelName: "test-model",
+		CLIPath:   fake,
+		Timeout:   5 * time.Second,
+	}
+
+	var got strings.Builder
+	streamErr := p.Stream([]Message{{Role: "user", Content: "hello"}}, func(chunk string) { got.WriteString(chunk) })
+	os.Stderr = oldStderr
+	w.Close()
+	logData, _ := io.ReadAll(r)
+	r.Close()
+	if streamErr != nil {
+		t.Fatal(streamErr)
+	}
+	logs := string(logData)
+	for _, want := range []string{"child log line", "tool Bash: go test ./...", "done turns=1"} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected live logs to contain %q, got:\n%s", want, logs)
+		}
+	}
+	if got.String() != "done" {
+		t.Fatalf("expected final result, got %q", got.String())
 	}
 }
 

@@ -376,7 +376,7 @@ workflows:
 	}
 }
 
-func TestRunOptionsFastSkipsTestAndCapsReviewLoop(t *testing.T) {
+func TestRunOptionsFastUsesSingleFastStep(t *testing.T) {
 	dir := t.TempDir()
 	yamlContent := `
 workflows:
@@ -395,14 +395,11 @@ workflows:
 	}
 
 	steps := eng.planSteps("default", RunOptions{Fast: true})
-	if len(steps) != 2 {
-		t.Fatalf("expected 2 steps, got %#v", steps)
+	if len(steps) != 1 {
+		t.Fatalf("expected 1 step, got %#v", steps)
 	}
-	if steps[0].Name != "design" || steps[1].Name != "review_loop" {
+	if steps[0].Name != "fast" {
 		t.Fatalf("unexpected fast plan: %#v", steps)
-	}
-	if steps[1].MaxRounds != 1 {
-		t.Fatalf("fast review_loop max rounds = %d, want 1", steps[1].MaxRounds)
 	}
 }
 

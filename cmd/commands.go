@@ -191,7 +191,7 @@ func NewRunCmd() *cobra.Command {
 	addFeatureFlag(cmd)
 	cmd.Flags().String("from", "", "start workflow from the named step")
 	cmd.Flags().Bool("resume", false, "resume from the last failed step")
-	cmd.Flags().Bool("fast", false, "skip slow optional steps")
+	cmd.Flags().Bool("fast", false, "run as one Claude Code pass with tests")
 	return cmd
 }
 

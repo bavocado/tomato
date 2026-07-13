@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -66,7 +67,8 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 		"--print",
 		"--permission-mode", "auto",
 		"--effort", "high",
-		"--output-format", "json",
+		"--output-format", "stream-json",
+		"--verbose",
 	}
 	if p.ModelName != "" {
 		args = append(args, "--model", p.ModelName)
@@ -114,30 +116,53 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 	}
 	cmd.Env = clean
 
-	var stdout, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderrBuf
-
 	fmt.Fprintf(os.Stderr, "[claude] command=%s %s timeout=%s\n", cliPath, strings.Join(args, " "), p.effectiveTimeout())
 
-	// Run claude to completion. JSON output cannot be streamed incrementally
-	// (the full array must be parseable), so we wait for the process to exit
-	// and then parse.
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	var stderrBuf bytes.Buffer
+	stderrDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.MultiWriter(os.Stderr, &stderrBuf), stderrPipe)
+		stderrDone <- err
+	}()
+
+	var stdout bytes.Buffer
+	var events []map[string]interface{}
+	stdoutDone := make(chan error, 1)
+	go func() {
+		events, err = readClaudeStream(io.TeeReader(stdoutPipe, &stdout))
+		stdoutDone <- err
+	}()
+
 	waitDone := make(chan error, 1)
 	go func() {
-		waitDone <- cmd.Run()
+		waitDone <- cmd.Wait()
 	}()
 
 	select {
 	case waitErr := <-waitDone:
+		<-stderrDone
+		decodeErr := <-stdoutDone
 		if waitErr != nil {
 			// Even on non-zero exit, claude may have written a JSON array to
 			// stdout containing a "result" entry with is_error=true (e.g. API
 			// 429 quota exceeded). Try to parse it for a better error message
 			// before falling back to the generic exit error.
 			stderrStr := strings.TrimSpace(stderrBuf.String())
-			if stdout.Len() > 0 {
-				if text, sid, perr := parseClaudeJSON(stdout.Bytes(), stderrStr); perr == nil {
+			if len(events) > 0 || stdout.Len() > 0 {
+				if text, sid, perr := parseClaudeOutput(events, stdout.Bytes(), stderrStr, decodeErr); perr == nil {
 					if sid != "" {
 						p.LastSessionID = sid
 					}
@@ -165,11 +190,13 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 		// make/go build) don't survive the timeout.
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		<-waitDone
+		<-stderrDone
+		<-stdoutDone
 		return fmt.Errorf("claude timed out after %s", p.effectiveTimeout())
 	}
 
 	// Parse the JSON array and extract the session id + text content.
-	text, sid, err := parseClaudeJSON(stdout.Bytes(), stderrBuf.String())
+	text, sid, err := parseClaudeOutput(events, stdout.Bytes(), stderrBuf.String(), nil)
 	if err != nil {
 		return err
 	}
@@ -180,6 +207,80 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 		onChunk(text)
 	}
 	return nil
+}
+
+func readClaudeStream(r io.Reader) ([]map[string]interface{}, error) {
+	dec := json.NewDecoder(r)
+	var events []map[string]interface{}
+	for {
+		var v interface{}
+		if err := dec.Decode(&v); err != nil {
+			if err == io.EOF {
+				return events, nil
+			}
+			return events, err
+		}
+		switch x := v.(type) {
+		case map[string]interface{}:
+			events = append(events, x)
+			logClaudeEvent(x)
+		case []interface{}:
+			for _, item := range x {
+				if m, ok := item.(map[string]interface{}); ok {
+					events = append(events, m)
+					logClaudeEvent(m)
+				}
+			}
+		}
+	}
+}
+
+func parseClaudeOutput(events []map[string]interface{}, stdout []byte, stderr string, streamErr error) (string, string, error) {
+	if streamErr == nil && len(events) > 0 {
+		return collectClaudeText(events)
+	}
+	if len(stdout) > 0 {
+		return parseClaudeJSON(stdout, stderr)
+	}
+	if streamErr != nil {
+		return "", "", streamErr
+	}
+	return "", "", nil
+}
+
+func logClaudeEvent(m map[string]interface{}) {
+	switch m["type"] {
+	case "system":
+		fmt.Fprintf(os.Stderr, "[claude] session=%v model=%v\n", m["session_id"], m["model"])
+	case "assistant":
+		logClaudeAssistant(m)
+	case "result":
+		fmt.Fprintf(os.Stderr, "[claude] done turns=%v duration_ms=%v\n", m["num_turns"], m["duration_ms"])
+	}
+}
+
+func logClaudeAssistant(m map[string]interface{}) {
+	msg, ok := m["message"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	items, ok := msg["content"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, item := range items {
+		part, ok := item.(map[string]interface{})
+		if !ok || part["type"] != "tool_use" {
+			continue
+		}
+		name, _ := part["name"].(string)
+		input, _ := part["input"].(map[string]interface{})
+		detail := ""
+		if command, _ := input["command"].(string); command != "" {
+			detail = ": " + command
+		}
+		fmt.Fprintf(os.Stderr, "[claude] tool %s%s\n", name, detail)
+	}
 }
 
 // parseClaudeJSON extracts the assistant text and session id from claude's

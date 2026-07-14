@@ -2,6 +2,7 @@ package steps
 
 import (
 	"path/filepath"
+	"time"
 
 	"github.com/bavocado/tomato/pkg/model"
 	"github.com/bavocado/tomato/pkg/runner"
@@ -98,7 +99,7 @@ func runFast(cfg *StepConfig, args []string) *model.StepResult {
 		cfg.RepoDir,
 		cfg.ModelName,
 		cfg.LLMStream,
-		cfg.PromptVersion,
+		cfg.PromptVersion+"-"+time.Now().UTC().Format(time.RFC3339Nano),
 		cfg.BudgetTracker,
 	)
 }

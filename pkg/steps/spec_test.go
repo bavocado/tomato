@@ -1,8 +1,12 @@
 package steps
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bavocado/tomato/pkg/runner"
 )
 
 func TestSpecPrompt(t *testing.T) {
@@ -83,6 +87,38 @@ func TestStepRegistration(t *testing.T) {
 		if fn == nil {
 			t.Fatalf("expected non-nil step function for %s", name)
 		}
+	}
+}
+
+func TestRunFastBypassesResponseCache(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := filepath.Join(dir, "docs", "specs", "feat")
+	if err := os.MkdirAll(featureDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(featureDir, "idea.txt"), []byte("do it"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	cfg := &StepConfig{
+		RepoDir:    dir,
+		FeatureDir: featureDir,
+		Feature:    "feat",
+		ModelName:  "glm/glm-5.2",
+		LLMStream: func(messages []runner.Message, onChunk func(string)) error {
+			calls++
+			onChunk("ok")
+			return nil
+		},
+	}
+
+	for i := 0; i < 2; i++ {
+		if res := runFast(cfg, nil); !res.Success {
+			t.Fatalf("runFast failed: %s", res.Error)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("fast should call LLM every run, got %d calls", calls)
 	}
 }
 

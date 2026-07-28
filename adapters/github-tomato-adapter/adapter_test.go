@@ -81,6 +81,24 @@ func TestParsePRCreateOutputEmpty(t *testing.T) {
 	}
 }
 
+func TestParseIssueCreateOutputURL(t *testing.T) {
+	out := "https://github.com/bavocado/tomato/issues/7\n"
+	result := parseIssueCreateOutput(out)
+	if result["url"] != "https://github.com/bavocado/tomato/issues/7" {
+		t.Errorf("expected URL parsed, got %q", result["url"])
+	}
+	if result["task_ref"] != "7" {
+		t.Errorf("expected task_ref 7, got %q", result["task_ref"])
+	}
+}
+
+func TestParseIssueCreateOutputEmpty(t *testing.T) {
+	result := parseIssueCreateOutput("")
+	if result["url"] != "" || result["task_ref"] != "" {
+		t.Errorf("expected empty fields, got %#v", result)
+	}
+}
+
 func TestUpdateStatusOutput(t *testing.T) {
 	input := `{"task_ref": "GH-123", "status": "in-progress"}`
 	var m map[string]interface{}

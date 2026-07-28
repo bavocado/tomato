@@ -37,7 +37,7 @@ func main() {
 	case "create-task":
 		title := str(input, "title")
 		body := str(input, "description")
-		output, err = runGh("issue", "create", "--title", title, "--body", body, "--json", "number,url")
+		output, err = createIssue(title, body)
 	case "update-status":
 		output = map[string]string{"task_ref": str(input, "task_ref"), "status": str(input, "status")}
 	case "fetch-task":
@@ -86,6 +86,33 @@ func needsInput(subcommand string) bool {
 	default:
 		return true
 	}
+}
+
+func createIssue(title, body string) (interface{}, error) {
+	// gh issue create does not support --json (only list/view do). It prints the
+	// created issue URL to stdout, so parse that instead — same shape as createPR.
+	cmd := exec.Command("gh", "issue", "create", "--title", title, "--body", body)
+	cmd.Env = os.Environ()
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		cmd.Env = append(cmd.Env, "GH_TOKEN="+token)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("gh issue create failed: %s", string(exitErr.Stderr))
+		}
+		return nil, err
+	}
+	return parseIssueCreateOutput(string(out)), nil
+}
+
+func parseIssueCreateOutput(out string) map[string]string {
+	url := strings.TrimSpace(out)
+	ref := ""
+	if idx := strings.LastIndex(url, "/"); idx >= 0 && idx < len(url)-1 {
+		ref = url[idx+1:]
+	}
+	return map[string]string{"task_ref": ref, "url": url}
 }
 
 func createPR(title, body, branch string) (interface{}, error) {

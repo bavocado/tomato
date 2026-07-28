@@ -1,7 +1,10 @@
 package steps
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/bavocado/tomato/pkg/model"
 	"github.com/bavocado/tomato/pkg/runner"
@@ -83,6 +86,19 @@ func runSpec(cfg *StepConfig, args []string) *model.StepResult {
 	// Input: user's rough idea (idea.txt); Output: generated PRD (prd.md)
 	ideaPath := filepath.Join(cfg.FeatureDir, "idea.txt")
 	prdPath := filepath.Join(cfg.FeatureDir, "prd.md")
+
+	// The idea is the only human-authored input to the whole workflow. Without
+	// it there is nothing to analyze — fail fast with a clear ask rather than
+	// feeding the LLM an empty idea and letting it invent a PRD.
+	idea, _ := os.ReadFile(ideaPath)
+	if strings.TrimSpace(string(idea)) == "" {
+		return &model.StepResult{
+			StepName: "spec",
+			Success:  false,
+			Error:    fmt.Sprintf("no idea provided. Write your requirement to %s (or create idea.txt in the feature dir) before running tomato", ideaPath),
+		}
+	}
+
 	return runner.Execute(
 		"spec",
 		SpecPrompt,

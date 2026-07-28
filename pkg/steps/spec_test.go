@@ -129,6 +129,66 @@ func TestUnknownStep(t *testing.T) {
 	}
 }
 
+func TestRunSpecFailsWhenIdeaMissing(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := filepath.Join(dir, "docs", "specs", "feat")
+	if err := os.MkdirAll(featureDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	cfg := &StepConfig{
+		RepoDir:    dir,
+		FeatureDir: featureDir,
+		Feature:    "feat",
+		ModelName:  "glm/glm-5.2",
+		LLMStream: func(messages []runner.Message, onChunk func(string)) error {
+			calls++
+			return nil
+		},
+	}
+
+	res := runSpec(cfg, nil)
+	if res.Success {
+		t.Fatal("expected spec to fail when idea.txt is missing, but it succeeded")
+	}
+	if calls != 0 {
+		t.Fatalf("spec must not call the LLM without an idea; got %d call(s)", calls)
+	}
+	if res.Error == "" || !strings.Contains(strings.ToLower(res.Error), "idea") {
+		t.Errorf("error should ask the user for an idea, got %q", res.Error)
+	}
+}
+
+func TestRunSpecFailsWhenIdeaEmpty(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := filepath.Join(dir, "docs", "specs", "feat")
+	if err := os.MkdirAll(featureDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(featureDir, "idea.txt"), []byte("   \n  "), 0644); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	cfg := &StepConfig{
+		RepoDir:    dir,
+		FeatureDir: featureDir,
+		Feature:    "feat",
+		ModelName:  "glm/glm-5.2",
+		LLMStream: func(messages []runner.Message, onChunk func(string)) error {
+			calls++
+			return nil
+		},
+	}
+
+	res := runSpec(cfg, nil)
+	if res.Success {
+		t.Fatal("expected spec to fail when idea.txt is blank, but it succeeded")
+	}
+	if calls != 0 {
+		t.Fatalf("spec must not call the LLM on a blank idea; got %d call(s)", calls)
+	}
+}
+
 func assertContainsAll(t *testing.T, prompt string, required []string) {
 	t.Helper()
 	if strings.TrimSpace(prompt) == "" {

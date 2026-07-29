@@ -95,7 +95,14 @@ func runSpec(cfg *StepConfig, args []string) *model.StepResult {
 	}
 	prdPath := filepath.Join(cfg.FeatureDir, "prd.md")
 
-	idea, _ := os.ReadFile(ideaPath)
+	idea, readErr := os.ReadFile(ideaPath)
+	if readErr != nil {
+		return &model.StepResult{
+			StepName: "spec",
+			Success:  false,
+			Error:    fmt.Sprintf("failed to read idea %s: %v", ideaPath, readErr),
+		}
+	}
 	if strings.TrimSpace(string(idea)) == "" {
 		return &model.StepResult{
 			StepName: "spec",

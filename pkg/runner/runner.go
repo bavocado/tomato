@@ -317,7 +317,7 @@ func buildMessages(stepName, promptTemplate string, inputFiles []string, repoDir
 }
 
 func systemPrompt(stepName string) string {
-	return fmt.Sprintf("You are tomato, an AI software development assistant. Output in markdown.\n\nFor this %s step, delegate the substantive work to a fresh Task subagent suited to the step. Do not rely on any prior Claude session or conversation state; use only the prompt, files, and tools available in this invocation. If CodeDB/codegraph MCP tools are available, query them for relevant code before reading broad file ranges. Return the final artifact text requested by tomato.", stepName)
+	return fmt.Sprintf("You are tomato, an AI software development assistant. Output only the requested artifact in markdown - no conversational filler, no narration about what you are doing, and no mention of sub-agents or delegating work. For this %s step, do the substantive work directly using only the prompt and files in this invocation, and return the final artifact text requested by tomato.", stepName)
 }
 
 func failure(stepName, runID string, start time.Time, modelName string, err error) *model.StepResult {

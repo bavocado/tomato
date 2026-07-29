@@ -353,7 +353,7 @@ func TestExecuteInjectsMissingInputAsEmpty(t *testing.T) {
 	}
 }
 
-func TestExecuteAddsSubagentInstruction(t *testing.T) {
+func TestExecuteSystemPromptIsModelAgnostic(t *testing.T) {
 	dir := t.TempDir()
 	var systemPrompt string
 	mockLLM := func(messages []Message, onChunk func(string)) error {
@@ -376,8 +376,18 @@ func TestExecuteAddsSubagentInstruction(t *testing.T) {
 	if !result.Success {
 		t.Fatalf("step failed: %s", result.Error)
 	}
-	if !strings.Contains(systemPrompt, "Task subagent") {
-		t.Fatalf("system prompt should instruct Claude to use a Task subagent, got %q", systemPrompt)
+	// The system prompt must be model-agnostic: non-Claude models (e.g. glm via
+	// the Anthropic-compatible API) cannot "delegate to a Task subagent" or use
+	// Claude MCP tools, and interpreting those literally yields conversational
+	// filler instead of the artifact.
+	if strings.Contains(systemPrompt, "Task subagent") {
+		t.Fatalf("system prompt must not reference a Task subagent (model-agnostic), got %q", systemPrompt)
+	}
+	if strings.Contains(systemPrompt, "codegraph MCP") {
+		t.Fatalf("system prompt must not reference Claude MCP tools (model-agnostic), got %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "directly") {
+		t.Fatalf("system prompt should instruct to do the work directly, got %q", systemPrompt)
 	}
 	if !strings.Contains(systemPrompt, "design") {
 		t.Fatalf("system prompt should name the step, got %q", systemPrompt)

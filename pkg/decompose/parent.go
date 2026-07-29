@@ -1,6 +1,8 @@
 package decompose
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -79,4 +81,27 @@ func slugify(s string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
+}
+
+// FindDecomposeParent scans <specsDir>/*/decomposition.md and returns the parent
+// feature names (the immediate sub-directory names) that already hold a
+// decomposition. apply uses this to locate a prior generate run regardless of
+// the parent name the design title would currently derive — breaking the cycle
+// where generate writes under a derived name but apply starts from the
+// branch-inferred name and cannot find it.
+func FindDecomposeParent(specsDir string) []string {
+	entries, err := os.ReadDir(specsDir)
+	if err != nil {
+		return nil
+	}
+	var parents []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(specsDir, e.Name(), "decomposition.md")); err == nil {
+			parents = append(parents, e.Name())
+		}
+	}
+	return parents
 }

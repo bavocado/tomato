@@ -548,14 +548,32 @@ func runDecomposeGenerate(cfg *steps.StepConfig, input string, force bool, featu
 }
 
 func runDecomposeApply(cfg *steps.StepConfig, force bool, featureExplicit bool) error {
-	// Re-derive the parent feature from the design doc so apply lands sub-features
-	// under the same parent dir that generate used, regardless of the current branch.
+	// Locate the parent dir that holds decomposition.md. generate writes under a
+	// name derived from the design title, but apply starts from the branch-
+	// inferred feature — so the two can diverge. Resolution order:
+	//   1. explicit --feature (already in cfg.Feature)
+	//   2. the current feature dir if it has decomposition.md
+	//   3. a unique prior generate run found by scanning docs/specs/*/
+	decompPath := filepath.Join(cfg.FeatureDir, "decomposition.md")
 	if !featureExplicit {
-		if design, err := os.ReadFile(filepath.Join(cfg.FeatureDir, "source-design.md")); err == nil {
-			applyParentFeature(cfg, decompose.ParentFeatureFromDesign(string(design)))
+		if _, err := os.Stat(decompPath); err != nil {
+			specsDir := filepath.Join(cfg.RepoDir, "docs", "specs")
+			switch parents := decompose.FindDecomposeParent(specsDir); len(parents) {
+			case 1:
+				applyParentFeature(cfg, parents[0])
+				decompPath = filepath.Join(cfg.FeatureDir, "decomposition.md")
+			case 0:
+				return fmt.Errorf("decomposition.md not found under %s — run `tomato decompose --input <design.md>` first", specsDir)
+			default:
+				return fmt.Errorf("multiple decomposition.md found under %s (%s); specify one with --feature", specsDir, strings.Join(parents, ", "))
+			}
 		}
 	}
-	decompPath := filepath.Join(cfg.FeatureDir, "decomposition.md")
+	// Keep the feature name in sync with the dir we resolved to: the sub-feature
+	// dir prefix comes from cfg.Feature, so it must equal the parent dir's name.
+	if cfg.Feature != filepath.Base(cfg.FeatureDir) {
+		cfg.Feature = filepath.Base(cfg.FeatureDir)
+	}
 	content, err := os.ReadFile(decompPath)
 	if err != nil {
 		return fmt.Errorf("decomposition.md not found at %s — run `tomato decompose --input <design.md>` first to generate it", decompPath)

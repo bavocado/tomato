@@ -217,6 +217,59 @@ func TestRunDecomposeApplyHappyPath(t *testing.T) {
 	}
 }
 
+// TestRunDecomposeApplyScansForParent is the regression test for the
+// generate/apply divergence: generate writes under a design-derived parent
+// (e.g. "grape"), but apply starts from the branch-inferred feature dir
+// (e.g. "feat") which has no decomposition.md. apply must scan docs/specs/*/
+// and land on the single prior run, not fail looking in the wrong dir.
+func TestRunDecomposeApplyScansForParent(t *testing.T) {
+	dir := t.TempDir()
+	// The prior generate run landed under "grape" (design-derived).
+	grapeDir := filepath.Join(dir, "docs", "specs", "grape")
+	os.MkdirAll(grapeDir, 0755)
+	os.WriteFile(filepath.Join(grapeDir, "source-design.md"), []byte("# grape"), 0644)
+	decomp := "# Decomposition\n\n```yaml\n" +
+		"source: source-design.md\n" +
+		"total_features: 1\n" +
+		"dag_check: passed\n" +
+		"critical_path: [F-001]\n" +
+		"spikes: []\n" +
+		"features:\n" +
+		"  - id: F-001\n" +
+		"    title: Sub\n" +
+		"    goal: g\n" +
+		"    user_value: v\n" +
+		"    slice_type: workflow\n" +
+		"    c4_level: container\n" +
+		"    priority: must\n" +
+		"    depends_on: []\n" +
+		"    acceptance_criteria:\n" +
+		"      - c1\n" +
+		"    complexity: S\n" +
+		"    is_spike: false\n" +
+		"    out_of_scope: []\n" +
+		"```\n"
+	os.WriteFile(filepath.Join(grapeDir, "decomposition.md"), []byte(decomp), 0644)
+
+	// apply is invoked as if on branch "feat" — wrong dir, no decomposition.md.
+	cfg := &steps.StepConfig{
+		RepoDir:    dir,
+		FeatureDir: filepath.Join(dir, "docs", "specs", "feat"),
+		Feature:    "feat",
+	}
+
+	if err := runDecomposeApply(cfg, false, false); err != nil {
+		t.Fatalf("runDecomposeApply failed to scan-resolve parent: %v", err)
+	}
+	// Sub-feature must use the discovered parent "grape", not the branch "feat".
+	if _, err := os.Stat(filepath.Join(dir, "docs", "specs", "grape-f001")); os.IsNotExist(err) {
+		t.Fatalf("apply should land sub-features under grape-f001 after scanning, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs", "specs", "feat-f001")); err == nil {
+		t.Fatalf("apply must not use the branch-inferred parent feat-f001")
+	}
+}
+
 func TestRunDecomposeGenerateExistingNoForce(t *testing.T) {
 	dir := t.TempDir()
 	featureDir := filepath.Join(dir, "docs", "specs", "feat")

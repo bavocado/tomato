@@ -35,6 +35,7 @@ Documentation: https://github.com/bavocado/tomato`,
 	rootCmd.AddCommand(NewHistoryCmd())
 	rootCmd.AddCommand(NewCostCmd())
 	rootCmd.AddCommand(NewConfigCmd())
+	rootCmd.AddCommand(NewDecomposeCmd())
 
 	return rootCmd
 }

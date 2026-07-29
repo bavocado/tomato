@@ -10,6 +10,7 @@ import (
 	"github.com/bavocado/tomato/pkg/codegraph"
 	"github.com/bavocado/tomato/pkg/config"
 	"github.com/bavocado/tomato/pkg/cost"
+	"github.com/bavocado/tomato/pkg/decompose"
 	"github.com/bavocado/tomato/pkg/engine"
 	"github.com/bavocado/tomato/pkg/history"
 	"github.com/bavocado/tomato/pkg/steps"
@@ -483,4 +484,83 @@ func maskSecret(secret string) string {
 		return secret + "..."
 	}
 	return secret[:8] + "..."
+}
+
+func NewDecomposeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "decompose",
+		Short: "Decompose a design doc into sub-features",
+	}
+	cmd.RunE = withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
+		input, _ := cmd.Flags().GetString("input")
+		apply, _ := cmd.Flags().GetBool("apply")
+		force, _ := cmd.Flags().GetBool("force")
+
+		if input != "" && apply {
+			return fmt.Errorf("--input and --apply are mutually exclusive")
+		}
+		if input == "" && !apply {
+			return fmt.Errorf("usage: tomato decompose --input <doc> | tomato decompose --apply")
+		}
+		if apply {
+			return runDecomposeApply(cfg, force)
+		}
+		return runDecomposeGenerate(cfg, input, force)
+	})
+	cmd.Flags().String("input", "", "path to the design document to decompose")
+	cmd.Flags().Bool("apply", false, "materialize sub-features from decomposition.md")
+	addForceFlag(cmd)
+	addFeatureFlag(cmd)
+	return cmd
+}
+
+func runDecomposeGenerate(cfg *steps.StepConfig, input string, force bool) error {
+	if !force && outputsExist(cfg.FeatureDir, "decomposition.md") {
+		return fmt.Errorf("decomposition.md already exists. Use --force to overwrite")
+	}
+	data, err := os.ReadFile(input)
+	if err != nil {
+		return fmt.Errorf("reading --input: %w", err)
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return fmt.Errorf("--input %s is empty", input)
+	}
+	sourcePath := filepath.Join(cfg.FeatureDir, "source-design.md")
+	if err := os.WriteFile(sourcePath, data, 0644); err != nil {
+		return fmt.Errorf("writing source-design.md: %w", err)
+	}
+	result := runStepWithName("decompose", cfg)
+	printResult(result)
+	if !result.Success {
+		os.Exit(1)
+	}
+	return nil
+}
+
+func runDecomposeApply(cfg *steps.StepConfig, force bool) error {
+	decompPath := filepath.Join(cfg.FeatureDir, "decomposition.md")
+	content, err := os.ReadFile(decompPath)
+	if err != nil {
+		return fmt.Errorf("reading decomposition.md (run `tomato decompose --input` first): %w", err)
+	}
+	d, err := decompose.ParseDecomposition(string(content))
+	if err != nil {
+		return fmt.Errorf("parsing decomposition.md: %w", err)
+	}
+	if err := decompose.Validate(d); err != nil {
+		return err
+	}
+	sourcePath := filepath.Join(cfg.FeatureDir, "source-design.md")
+	if _, err := os.Stat(sourcePath); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠  source-design.md missing; parent-context.md will lack the full parent doc\n")
+	}
+	specsDir := filepath.Join(cfg.RepoDir, "docs", "specs")
+	if err := decompose.Apply(d, cfg.Feature, specsDir, sourcePath, force); err != nil {
+		return err
+	}
+	if err := decompose.WriteOrchestration(d, cfg.Feature, cfg.FeatureDir); err != nil {
+		return err
+	}
+	fmt.Printf("✓ decomposed into %d sub-features; orchestration: %s/orchestration.yaml\n", len(d.Features), cfg.FeatureDir)
+	return nil
 }

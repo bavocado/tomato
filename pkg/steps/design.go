@@ -1,6 +1,7 @@
 package steps
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/bavocado/tomato/pkg/model"
@@ -68,16 +69,30 @@ Rules:
 - Prefer small, well-bounded components over large files.
 - If requirements are ambiguous, choose the simplest reasonable path and document the assumption.`
 
+// parentContextAddon is appended to DesignPrompt when parent-context.md exists
+// (sub-features from `tomato decompose`), so the LLM inherits the parent architecture.
+const parentContextAddon = `
+
+Parent architecture context (a sub-feature of a larger design; keep this design
+consistent with the parent and do not redefine boundaries the parent already fixed):
+{{.parent-context.md}}`
+
 func init() {
 	Register("design", runDesign)
 }
 
 func runDesign(cfg *StepConfig, args []string) *model.StepResult {
 	prdPath := filepath.Join(cfg.FeatureDir, "prd.md")
+	inputFiles := []string{prdPath}
+	prompt := DesignPrompt
+	if ctxPath := filepath.Join(cfg.FeatureDir, "parent-context.md"); fileExists(ctxPath) {
+		inputFiles = append(inputFiles, ctxPath)
+		prompt = DesignPrompt + parentContextAddon
+	}
 	return runner.Execute(
 		"design",
-		DesignPrompt,
-		[]string{prdPath},
+		prompt,
+		inputFiles,
 		[]string{
 			filepath.Join(cfg.FeatureDir, "architecture.md"),
 			filepath.Join(cfg.FeatureDir, "ui-spec.md"),
@@ -89,4 +104,9 @@ func runDesign(cfg *StepConfig, args []string) *model.StepResult {
 		cfg.PromptVersion,
 		cfg.BudgetTracker,
 	)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

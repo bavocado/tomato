@@ -54,7 +54,7 @@ func (p *OpenAIProvider) Stream(messages []Message, onChunk func(string)) error 
 		return fmt.Errorf("marshaling request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", p.BaseURL+"/chat/completions", bytes.NewReader(jsonData))
+	req, err := http.NewRequest("POST", chatCompletionsURL(p.BaseURL), bytes.NewReader(jsonData))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
@@ -96,9 +96,15 @@ func (p *OpenAIProvider) Stream(messages []Message, onChunk func(string)) error 
 }
 
 // NewProvider creates a Provider from a ProviderConfig.
-// GLM/DeepSeek/Anthropic models are executed via the `claude` CLI tool with
-// ANTHROPIC_* environment variables set from tomato.yaml provider config.
-// OpenAI-compatible HTTP is retained as a fallback for openai/* and custom providers.
+//
+// Routing:
+//   - anthropic/* → ClaudeCLIProvider (shells out to the `claude` CLI).
+//   - Any other provider with a base_url + auth_token → OpenAIProvider talking
+//     directly to that OpenAI-compatible endpoint over HTTP. This covers the
+//     ai-router setups used for glm/deepseek/ark in tomato.yaml: routing them
+//     through the claude CLI stalled because claude hangs on init when pointed
+//     at a non-Anthropic endpoint, so direct HTTP is the reliable path.
+//   - Otherwise → OpenAIProvider against the provider's default base URL.
 func NewProvider(cfg ProviderConfig) (Provider, error) {
 	parts := strings.SplitN(cfg.ModelID, "/", 2)
 	if len(parts) != 2 {
@@ -110,10 +116,21 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 
 	baseURL := firstNonEmpty(cfg.BaseURL, cfg.AnthropicURL)
 	authToken := firstNonEmpty(cfg.AuthToken, cfg.AnthropicKey)
-	claudeModel := firstNonEmpty(cfg.Model, cfg.AnthropicModel, modelName)
+	configModel := firstNonEmpty(cfg.Model, cfg.AnthropicModel, modelName)
 
-	if providerName == "anthropic" || providerName == "glm" || providerName == "deepseek" || baseURL != "" || authToken != "" {
-		return NewClaudeCLIProvider(cfg.ModelID, baseURL, authToken, claudeModel, cfg.SessionID, cfg.RepoDir)
+	// Only the native Anthropic models go through the claude CLI.
+	if providerName == "anthropic" {
+		return NewClaudeCLIProvider(cfg.ModelID, baseURL, authToken, configModel, cfg.SessionID, cfg.RepoDir)
+	}
+
+	// A provider configured with its own base_url + auth_token (e.g. glm/ark/
+	// deepseek fronted by ai-router) speaks OpenAI-compatible HTTP directly.
+	if baseURL != "" && authToken != "" {
+		return &OpenAIProvider{
+			BaseURL:   baseURL,
+			APIKey:    authToken,
+			modelName: configModel,
+		}, nil
 	}
 
 	return &OpenAIProvider{
@@ -144,6 +161,20 @@ func defaultBaseURL(provider string) string {
 		return url
 	}
 	return "https://api.openai.com/v1"
+}
+
+// chatCompletionsURL resolves the chat-completions endpoint for a base URL.
+// Known base URLs already include an API version segment (OpenAI's /v1, GLM's
+// /v4), but bare host:port endpoints fronted by ai-router (e.g.
+// http://127.0.0.1:1980) do not and need /v1 prepended, otherwise the request
+// 404s on /chat/completions.
+func chatCompletionsURL(baseURL string) string {
+	for _, v := range []string{"/v1", "/v2", "/v4"} {
+		if strings.Contains(baseURL, v) {
+			return baseURL + "/chat/completions"
+		}
+	}
+	return baseURL + "/v1/chat/completions"
 }
 
 // EnvKeyName returns the environment variable name for a provider's API key/token.

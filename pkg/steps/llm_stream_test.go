@@ -29,10 +29,10 @@ echo '[{"type":"system","session_id":"new-session"},{"type":"text","content":"ok
 
 	stream := NewLLMStream(&StepConfig{
 		RepoDir:        dir,
-		ModelName:      "deepseek/deepseek-v4-pro",
+		ModelName:      "anthropic/claude-sonnet-5",
 		AnthropicURL:   "https://example.test",
 		AnthropicKey:   "token",
-		AnthropicModel: "deepseek-v4-pro",
+		AnthropicModel: "claude-sonnet-5",
 	})
 
 	var got strings.Builder

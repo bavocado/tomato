@@ -76,13 +76,14 @@ func TestModelFromConfig(t *testing.T) {
 
 func TestNewProvider(t *testing.T) {
 	tests := []struct {
-		modelID string
-		wantErr bool
+		modelID  string
+		wantErr  bool
 		wantType string
 	}{
 		{"openai/gpt-5", false, "openai"},
-		{"glm/glm-5.2", false, "claude-cli"},
-		{"deepseek/deepseek-4pro", false, "claude-cli"},
+		{"glm/glm-5.2", false, "openai"},
+		{"deepseek/deepseek-4pro", false, "openai"},
+		{"anthropic/claude-sonnet-5", false, "claude-cli"},
 		{"invalid", true, ""},
 	}
 
@@ -103,37 +104,62 @@ func TestNewProvider(t *testing.T) {
 		if p.Model() != strings.SplitN(tt.modelID, "/", 2)[1] {
 			t.Errorf("expected model %s, got %s", strings.SplitN(tt.modelID, "/", 2)[1], p.Model())
 		}
-		if tt.wantType == "claude-cli" {
+		switch tt.wantType {
+		case "claude-cli":
 			if _, ok := p.(*ClaudeCLIProvider); !ok {
 				t.Errorf("expected %s to use ClaudeCLIProvider, got %T", tt.modelID, p)
+			}
+		case "openai":
+			if _, ok := p.(*OpenAIProvider); !ok {
+				t.Errorf("expected %s to use OpenAIProvider, got %T", tt.modelID, p)
 			}
 		}
 	}
 }
 
-func TestNewProviderUsesProviderConfigForClaudeCLI(t *testing.T) {
+func TestNewProviderUsesProviderConfigForOpenAI(t *testing.T) {
 	p, err := NewProvider(ProviderConfig{
 		ModelID:   "glm/glm-5.2",
-		BaseURL:   "https://glm.example.com",
-		AuthToken: "glm-token",
-		Model:     "glm-5.2",
+		BaseURL:   "http://127.0.0.1:1980",
+		AuthToken: "sk-ai-router",
+		Model:     "glm:glm-5.2",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	cli, ok := p.(*ClaudeCLIProvider)
+	prov, ok := p.(*OpenAIProvider)
 	if !ok {
-		t.Fatalf("expected ClaudeCLIProvider, got %T", p)
+		t.Fatalf("expected OpenAIProvider, got %T", p)
 	}
-	if cli.BaseURL != "https://glm.example.com" {
-		t.Errorf("expected base url from config, got %s", cli.BaseURL)
+	if prov.BaseURL != "http://127.0.0.1:1980" {
+		t.Errorf("expected base url from config, got %s", prov.BaseURL)
 	}
-	if cli.AuthToken != "glm-token" {
-		t.Errorf("expected auth token from config")
+	if prov.APIKey != "sk-ai-router" {
+		t.Errorf("expected auth token from config, got %s", prov.APIKey)
 	}
-	if cli.ModelName != "glm-5.2" {
-		t.Errorf("expected model glm-5.2, got %s", cli.ModelName)
+	if prov.Model() != "glm:glm-5.2" {
+		t.Errorf("expected model glm:glm-5.2, got %s", prov.Model())
+	}
+}
+
+func TestChatCompletionsURL(t *testing.T) {
+	tests := []struct {
+		base string
+		want string
+	}{
+		// ai-router-style bare host:port gets /v1 prepended (otherwise 404).
+		{"http://127.0.0.1:1980", "http://127.0.0.1:1980/v1/chat/completions"},
+		// Default provider URLs already carry a version segment.
+		{"https://api.openai.com/v1", "https://api.openai.com/v1/chat/completions"},
+		{"https://open.bigmodel.cn/api/paas/v4", "https://open.bigmodel.cn/api/paas/v4/chat/completions"},
+		// Trailing path with no version segment still gets /v1.
+		{"https://example.com/proxy", "https://example.com/proxy/v1/chat/completions"},
+	}
+	for _, tt := range tests {
+		if got := chatCompletionsURL(tt.base); got != tt.want {
+			t.Errorf("chatCompletionsURL(%q) = %q, want %q", tt.base, got, tt.want)
+		}
 	}
 }
 

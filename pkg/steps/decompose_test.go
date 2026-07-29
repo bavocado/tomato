@@ -60,3 +60,25 @@ func TestRunDecomposeWritesDecomposition(t *testing.T) {
 		t.Errorf("decomposition.md missing yaml block, got: %s", out)
 	}
 }
+
+func TestRunDecomposeDisablesCodegraph(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := filepath.Join(dir, "docs", "specs", "feat")
+	os.MkdirAll(featureDir, 0755)
+	os.WriteFile(filepath.Join(featureDir, "source-design.md"), []byte("# Design"), 0644)
+	cfg := &StepConfig{
+		RepoDir: dir, FeatureDir: featureDir, Feature: "feat",
+		ModelName: "glm/glm-5.2",
+		LLMStream: func(messages []runner.Message, onChunk func(string)) error {
+			onChunk("# Decomposition\n\n```yaml\nfeatures: []\n```")
+			return nil
+		},
+	}
+	res := runDecompose(cfg, nil)
+	if !res.Success {
+		t.Fatalf("runDecompose failed: %s", res.Error)
+	}
+	if !cfg.DisableCodegraph {
+		t.Error("runDecompose should set DisableCodegraph=true so the provider skips the codegraph MCP mount")
+	}
+}

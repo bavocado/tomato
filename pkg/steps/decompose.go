@@ -117,6 +117,9 @@ func init() {
 func runDecompose(cfg *StepConfig, args []string) *model.StepResult {
 	// Input: source design doc (source-design.md); Output: decomposition.md.
 	// Single output file -> no ---TOMATO-ARTIFACT--- marker needed.
+	// decompose analyzes the design doc, not the codebase, so skip codegraph MCP
+	// (otherwise claude explores the repo via MCP and stalls for minutes).
+	cfg.DisableCodegraph = true
 	sourcePath := filepath.Join(cfg.FeatureDir, "source-design.md")
 	outPath := filepath.Join(cfg.FeatureDir, "decomposition.md")
 	return runner.Execute(

@@ -4,44 +4,49 @@ import "testing"
 
 func TestParentFeatureFromDesign(t *testing.T) {
 	tests := []struct {
-		name  string
+		name   string
 		design string
-		want  string
+		want   string
 	}{
 		{
-			name:  "chinese title drops boilerplate",
+			name:   "mixed cjk+ascii keeps ascii drops cjk",
 			design: "# grape 平台设计文档\n\n正文",
-			want:  "grape-平台",
+			want:   "grape",
 		},
 		{
-			name:  "english design doc suffix",
+			name:   "english design doc suffix",
 			design: "# User Auth Design Document\nbody",
-			want:  "user-auth",
+			want:   "user-auth",
 		},
 		{
-			name:  "plain title no boilerplate",
+			name:   "plain title no boilerplate",
 			design: "# Payment Gateway\n\n## details",
-			want:  "payment-gateway",
+			want:   "payment-gateway",
 		},
 		{
-			name:  "ignores h2 picks first h1",
+			name:   "ignores h2 picks first h1",
 			design: "## not this\n\n# Real Title\nbody",
-			want:  "real-title",
+			want:   "real-title",
 		},
 		{
-			name:  "empty heading falls back",
+			name:   "empty heading falls back",
 			design: "#\nbody",
-			want:  "source",
+			want:   "source",
 		},
 		{
-			name:  "no heading at all falls back",
+			name:   "no heading at all falls back",
 			design: "just body, no heading",
-			want:  "source",
+			want:   "source",
 		},
 		{
-			name:  "punctuation collapses to single dash",
+			name:   "pure cjk no ascii falls back",
+			design: "# 平台设计文档\nbody",
+			want:   "source",
+		},
+		{
+			name:   "punctuation collapses to single dash",
 			design: "# Foo!!!  Bar??? Baz",
-			want:  "foo-bar-baz",
+			want:   "foo-bar-baz",
 		},
 	}
 	for _, tt := range tests {

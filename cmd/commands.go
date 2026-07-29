@@ -558,7 +558,7 @@ func runDecomposeApply(cfg *steps.StepConfig, force bool, featureExplicit bool) 
 	decompPath := filepath.Join(cfg.FeatureDir, "decomposition.md")
 	content, err := os.ReadFile(decompPath)
 	if err != nil {
-		return fmt.Errorf("reading decomposition.md (run `tomato decompose --input` first): %w", err)
+		return fmt.Errorf("decomposition.md not found at %s — run `tomato decompose --input <design.md>` first to generate it", decompPath)
 	}
 	d, err := decompose.ParseDecomposition(string(content))
 	if err != nil {

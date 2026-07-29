@@ -2,7 +2,6 @@ package decompose
 
 import (
 	"strings"
-	"unicode"
 )
 
 // ParentFeatureFromDesign derives the parent feature name from a design
@@ -10,11 +9,11 @@ import (
 // parent name must reflect the design itself, not the git branch tomato happens
 // to be running on.
 //
-// The first top-level heading is used (e.g. "# grape 平台设计文档" →
-// "grape-平台设计文档"). Trailing boilerplate suffixes like "设计文档"/
-// "design"/"spec" are dropped. Whitespace and punctuation collapse to a single
-// "-", and CJK characters are kept (a pure-ASCII slug would erase Chinese
-// titles). Empty headings fall back to "source".
+// The slug is ASCII-only: only [a-z0-9._-] survive, everything else (spaces,
+// punctuation, CJK) is dropped and adjacent runs collapse to a single "-".
+// So "# grape 平台设计文档" → "grape". A pure-ASCII name keeps dirs portable
+// across shells and tools; headings that contain no ASCII at all fall back to
+// "source". Trailing boilerplate suffixes (design/spec) are trimmed first.
 func ParentFeatureFromDesign(design string) string {
 	title := firstH1(design)
 	title = trimBoilerplate(title)
@@ -55,23 +54,24 @@ func trimBoilerplate(s string) string {
 	return trimmed
 }
 
-// slugify keeps letters (incl. CJK), digits, ".", "_", "-"; every other run
-// (spaces, punctuation) becomes a single "-", and leading/trailing "-" are
-// stripped. CJK runes pass unicode.IsLetter, so a Chinese title survives.
+// slugify produces an ASCII-only slug: [a-z0-9._-] survive (letters lowercased),
+// every other rune (spaces, punctuation, CJK) is dropped and adjacent drops
+// collapse to a single "-". Leading/trailing "-" are stripped.
 func slugify(s string) string {
 	var b strings.Builder
 	prevSep := true
-	for _, r := range s {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
 		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-':
-			// Lowercase ASCII letters for tidy dir names; CJK/other letters
-			// are unchanged (unicode.ToLower is a no-op for them).
-			if r >= 'A' && r <= 'Z' {
-				r = r - 'A' + 'a'
-			}
-			b.WriteRune(r)
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
+			b.WriteByte(c)
+			prevSep = false
+		case c >= 'A' && c <= 'Z':
+			b.WriteByte(c + 'a' - 'A')
 			prevSep = false
 		default:
+			// Non-ASCII (multi-byte runes land here byte-by-byte) and ASCII
+			// separators both collapse to a single "-".
 			if !prevSep {
 				b.WriteByte('-')
 				prevSep = true

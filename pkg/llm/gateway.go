@@ -116,7 +116,10 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 
 	baseURL := firstNonEmpty(cfg.BaseURL, cfg.AnthropicURL)
 	authToken := firstNonEmpty(cfg.AuthToken, cfg.AnthropicKey)
-	configModel := firstNonEmpty(cfg.Model, cfg.AnthropicModel, modelName)
+	// The model name always comes from the model ID's segment after the
+	// provider ("/"). A provider carries no model of its own, so one provider
+	// can serve many models (e.g. an ai-router fronting glm and ark).
+	configModel := modelName
 
 	// Only the native Anthropic models go through the claude CLI.
 	if providerName == "anthropic" {

@@ -20,7 +20,6 @@ type ProviderConfig struct {
 	APIKey    string // fallback for direct OpenAI-compatible HTTP providers
 	BaseURL   string // passed to claude as ANTHROPIC_BASE_URL
 	AuthToken string // passed to claude as ANTHROPIC_AUTH_TOKEN
-	Model     string // passed to claude as ANTHROPIC_MODEL
 
 	// Deprecated: ignored. Claude CLI invocations always start fresh.
 	SessionID string
@@ -31,7 +30,6 @@ type ProviderConfig struct {
 	RepoDir string
 
 	// Deprecated: kept for older call sites during migration.
-	AnthropicURL   string
-	AnthropicKey   string
-	AnthropicModel string
+	AnthropicURL string
+	AnthropicKey string
 }

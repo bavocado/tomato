@@ -28,11 +28,10 @@ echo '[{"type":"system","session_id":"new-session"},{"type":"text","content":"ok
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	stream := NewLLMStream(&StepConfig{
-		RepoDir:        dir,
-		ModelName:      "anthropic/claude-sonnet-5",
-		AnthropicURL:   "https://example.test",
-		AnthropicKey:   "token",
-		AnthropicModel: "claude-sonnet-5",
+		RepoDir:      dir,
+		ModelName:    "anthropic/claude-sonnet-5",
+		AnthropicURL: "https://example.test",
+		AnthropicKey: "token",
 	})
 
 	var got strings.Builder

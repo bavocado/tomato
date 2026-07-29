@@ -73,7 +73,6 @@ func withFeatureAndModel(fn func(*steps.StepConfig, []string) error) func(*cobra
 				Adapters:       engine.BuildRegistry(cfg),
 				AnthropicURL:   resolveProviderBaseURL(providerCfg),
 				AnthropicKey:   resolveProviderAuthToken(providerCfg),
-				AnthropicModel: resolveProviderModel(providerCfg),
 				BudgetTracker:  tracker,
 			}
 		stepCfg.LLMStream = steps.NewLLMStream(stepCfg)
@@ -104,10 +103,6 @@ func resolveProviderBaseURL(p config.ProviderConnectionConfig) string {
 
 func resolveProviderAuthToken(p config.ProviderConnectionConfig) string {
 	return p.AuthToken
-}
-
-func resolveProviderModel(p config.ProviderConnectionConfig) string {
-	return p.Model
 }
 
 func runStepWithName(name string, cfg *steps.StepConfig) *model.StepResult {

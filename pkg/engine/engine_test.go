@@ -241,18 +241,13 @@ workflows:
 	}
 }
 
-func TestStepConfigUsesRoutedProviderModelOverAnthropicEnv(t *testing.T) {
-	t.Setenv("ANTHROPIC_BASE_URL", "https://glm.example.com")
-	t.Setenv("ANTHROPIC_AUTH_TOKEN", "glm-token")
-	t.Setenv("ANTHROPIC_MODEL", "glm-5.2")
-
+func TestStepConfigRoutesStepToProviderConnection(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Default()
 	cfg.Models.Steps["design"] = "deepseek/deepseek-v4-pro"
 	cfg.Providers["deepseek"] = config.ProviderConnectionConfig{
 		BaseURL:   "https://deepseek.example.com",
 		AuthToken: "deepseek-token",
-		Model:     "deepseek-v4-pro",
 	}
 	config.Save(cfg, filepath.Join(dir, "tomato.yaml"))
 	os.MkdirAll(filepath.Join(dir, ".tomato", "runs"), 0755)
@@ -264,6 +259,8 @@ func TestStepConfigUsesRoutedProviderModelOverAnthropicEnv(t *testing.T) {
 
 	stepCfg := eng.stepConfig(filepath.Join(dir, "docs", "specs", "f"), "f", "design")
 
+	// The model name (and its model segment) comes from the routed model ID;
+	// the provider only contributes the connection params.
 	if stepCfg.ModelName != "deepseek/deepseek-v4-pro" {
 		t.Fatalf("expected routed model deepseek/deepseek-v4-pro, got %s", stepCfg.ModelName)
 	}
@@ -272,9 +269,6 @@ func TestStepConfigUsesRoutedProviderModelOverAnthropicEnv(t *testing.T) {
 	}
 	if stepCfg.AnthropicKey != "deepseek-token" {
 		t.Errorf("expected deepseek token, got %s", stepCfg.AnthropicKey)
-	}
-	if stepCfg.AnthropicModel != "deepseek-v4-pro" {
-		t.Errorf("expected deepseek provider model, got %s", stepCfg.AnthropicModel)
 	}
 }
 

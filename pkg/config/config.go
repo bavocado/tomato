@@ -13,7 +13,6 @@ type Config struct {
 	Feature     string                              `yaml:"feature,omitempty"`
 	Models      ModelsConfig                        `yaml:"models"`
 	Providers   map[string]ProviderConnectionConfig `yaml:"providers"`
-	Anthropic   AnthropicConfig                     `yaml:"anthropic"` // legacy compatibility
 	Budget      BudgetConfig                        `yaml:"budget"`
 	Impl        ImplConfig                          `yaml:"impl"`
 	Workflows   map[string]WorkflowDef              `yaml:"workflows"`
@@ -28,47 +27,20 @@ type ModelsConfig struct {
 	Steps   map[string]string `yaml:"steps"`
 }
 
-// ProviderConnectionConfig defines Claude Code compatible provider settings.
-// These values are passed to the `claude` CLI as ANTHROPIC_* environment
-// variables, even when the logical provider is glm/deepseek.
+// ProviderConnectionConfig holds the connection parameters for a provider. A
+// provider only carries how to reach it (base_url + auth_token); the model name
+// is NOT here — it lives in the model ID (provider/model), so one provider can
+// serve any number of models (e.g. an ai-router fronting glm and ark). The
+// values are used either as OpenAI-compatible HTTP params or, for anthropic, as
+// ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN for the claude CLI.
 type ProviderConnectionConfig struct {
 	BaseURL   string `yaml:"base_url"`
 	AuthToken string `yaml:"auth_token"`
-	Model     string `yaml:"model"`
 }
 
-// AnthropicConfig defines legacy connection parameters for Anthropic.
-type AnthropicConfig = ProviderConnectionConfig
-
-// ResolvedAuthToken returns the effective auth token, preferring the
-// ANTHROPIC_AUTH_TOKEN environment variable over the yaml value. Design §2.4
-// mandates keys come from the environment (not git); the yaml field remains as
-// a fallback for local convenience.
-func (a AnthropicConfig) ResolvedAuthToken() string {
-	if env := os.Getenv("ANTHROPIC_AUTH_TOKEN"); env != "" {
-		return env
-	}
-	return a.AuthToken
-}
-
-// ResolvedBaseURL returns the effective base URL, preferring ANTHROPIC_BASE_URL.
-func (a AnthropicConfig) ResolvedBaseURL() string {
-	if env := os.Getenv("ANTHROPIC_BASE_URL"); env != "" {
-		return env
-	}
-	return a.BaseURL
-}
-
-// ResolvedModel returns the effective model, preferring ANTHROPIC_MODEL.
-func (a AnthropicConfig) ResolvedModel() string {
-	if env := os.Getenv("ANTHROPIC_MODEL"); env != "" {
-		return env
-	}
-	return a.Model
-}
-
-// ResolveProviderConfig returns the provider connection config for a modelID.
-// It first checks providers.<provider>, then falls back to legacy anthropic.
+// ResolveProviderConfig returns the connection config for a model ID's provider
+// segment (the part before "/"). A model is selected by its full ID
+// (provider/model), so the provider itself carries no model.
 func (c *Config) ResolveProviderConfig(modelID string) ProviderConnectionConfig {
 	provider := modelID
 	for i := 0; i < len(modelID); i++ {
@@ -81,9 +53,6 @@ func (c *Config) ResolveProviderConfig(modelID string) ProviderConnectionConfig 
 		if p, ok := c.Providers[provider]; ok {
 			return p
 		}
-	}
-	if provider == "anthropic" {
-		return c.Anthropic
 	}
 	return ProviderConnectionConfig{}
 }
@@ -289,22 +258,19 @@ func Default() *Config {
 				"glm": {
 					BaseURL:   "",
 					AuthToken: "",
-					Model:     "glm-5.2",
 				},
 				"deepseek": {
 					BaseURL:   "",
 					AuthToken: "",
-					Model:     "deepseek-v4-pro",
+				},
+				"anthropic": {
+					// Used when a step routes to anthropic/* (runs via the
+					// claude CLI). Token comes from ANTHROPIC_AUTH_TOKEN env by
+					// preference (design §2.4).
+					BaseURL:   "https://api.anthropic.com",
+					AuthToken: "",
 				},
 			},
-			Anthropic: AnthropicConfig{
-			// Optional provider: only used when a step is routed to
-			// anthropic/* (runs via the claude CLI). Token comes from
-			// ANTHROPIC_AUTH_TOKEN env by preference (design §2.4).
-			BaseURL:   "https://api.anthropic.com",
-			AuthToken: "",
-			Model:     "claude-sonnet-4-20250514",
-		},
 		Budget: BudgetConfig{
 			Mode:         "balanced",
 			GlobalPerRun: 300000,

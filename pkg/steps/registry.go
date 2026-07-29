@@ -26,9 +26,8 @@ type StepConfig struct {
 	// Bridge that serves it. May be nil when no adapter is configured.
 	Adapters *adapter.Registry
 	// Anthropic-specific connection parameters (from tomato.yaml)
-	AnthropicURL   string
-	AnthropicKey   string
-	AnthropicModel string
+	AnthropicURL string
+	AnthropicKey string
 	// DisableCodegraph, when true, builds the LLM provider without the codegraph
 	// MCP mount. Steps that analyze a document (e.g. decompose) rather than the
 	// codebase set this to stop claude from exploring the repo via MCP, which
@@ -82,7 +81,6 @@ func NewLLMStream(cfg *StepConfig) runner.LLMFunc {
 			APIKey:    cfg.APIKey,
 			BaseURL:   cfg.AnthropicURL,
 			AuthToken: cfg.AnthropicKey,
-			Model:     cfg.AnthropicModel,
 			RepoDir:   providerRepoDir,
 		})
 		if err != nil {

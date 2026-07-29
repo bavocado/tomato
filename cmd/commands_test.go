@@ -199,3 +199,36 @@ func TestRunDecomposeGenerateExistingNoForce(t *testing.T) {
 		t.Fatalf("expected 'already exists' error, got %v", err)
 	}
 }
+
+func TestDecomposeRequiresInputOrApply(t *testing.T) {
+	dir := t.TempDir()
+	tomatoYaml := `models:
+  default: claude/sonnet-4-20250514
+workflows:
+  default:
+    steps: [spec, design]
+`
+	if err := os.WriteFile(filepath.Join(dir, "tomato.yaml"), []byte(tomatoYaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(dir, "docs", "specs"), 0755)
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(oldWd) })
+
+	c := NewDecomposeCmd()
+	c.SetArgs([]string{}) // neither --input nor --apply
+	buf := new(bytes.Buffer)
+	c.SetOut(buf)
+	c.SetErr(buf)
+	err = c.Execute()
+	if err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Fatalf("expected usage error when no --input/--apply, got %v", err)
+	}
+}

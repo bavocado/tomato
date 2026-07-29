@@ -29,6 +29,11 @@ type StepConfig struct {
 	AnthropicURL   string
 	AnthropicKey   string
 	AnthropicModel string
+	// DisableCodegraph, when true, builds the LLM provider without the codegraph
+	// MCP mount. Steps that analyze a document (e.g. decompose) rather than the
+	// codebase set this to stop claude from exploring the repo via MCP, which
+	// otherwise stalls the step for minutes on indexed repos.
+	DisableCodegraph bool
 }
 
 // StepFunc is a function that executes a step and returns a result.
@@ -65,13 +70,20 @@ func NewLLMStream(cfg *StepConfig) runner.LLMFunc {
 			llmMessages[i] = llm.Message{Role: m.Role, Content: m.Content}
 		}
 
+		// codegraph MCP is mounted by the provider when RepoDir is set. Steps that
+		// set DisableCodegraph (e.g. decompose, which analyzes a doc not the repo)
+		// pass an empty RepoDir so claude does not explore the codebase via MCP.
+		providerRepoDir := cfg.RepoDir
+		if cfg.DisableCodegraph {
+			providerRepoDir = ""
+		}
 		provider, err := llm.NewProvider(llm.ProviderConfig{
 			ModelID:   cfg.ModelName,
 			APIKey:    cfg.APIKey,
 			BaseURL:   cfg.AnthropicURL,
 			AuthToken: cfg.AnthropicKey,
 			Model:     cfg.AnthropicModel,
-			RepoDir:   cfg.RepoDir,
+			RepoDir:   providerRepoDir,
 		})
 		if err != nil {
 			return err

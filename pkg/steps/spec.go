@@ -97,10 +97,17 @@ func runSpec(cfg *StepConfig, args []string) *model.StepResult {
 
 	idea, readErr := os.ReadFile(ideaPath)
 	if readErr != nil {
+		// Missing idea file is the common first-run case - give the friendly
+		// "no idea provided" guidance. Other read errors (permission, etc.) are
+		// unexpected and surface verbatim.
+		errMsg := fmt.Sprintf("no idea provided. Write your requirement to %s (idea.md or idea.txt) before running tomato", filepath.Join(cfg.FeatureDir, "idea.md"))
+		if !os.IsNotExist(readErr) {
+			errMsg = fmt.Sprintf("failed to read idea %s: %v", ideaPath, readErr)
+		}
 		return &model.StepResult{
 			StepName: "spec",
 			Success:  false,
-			Error:    fmt.Sprintf("failed to read idea %s: %v", ideaPath, readErr),
+			Error:    errMsg,
 		}
 	}
 	if strings.TrimSpace(string(idea)) == "" {

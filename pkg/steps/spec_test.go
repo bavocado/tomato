@@ -198,4 +198,7 @@ func TestRunSpecFailsWhenBothEmpty(t *testing.T) {
 	if res.Success {
 		t.Fatal("expected failure when no idea present")
 	}
+	if !strings.Contains(res.Error, "no idea provided") {
+		t.Errorf("expected friendly 'no idea provided' message when idea files are absent, got %q", res.Error)
+	}
 }

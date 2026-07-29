@@ -146,15 +146,15 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 		stdoutDone <- err
 	}()
 
-	waitDone := make(chan error, 1)
-	go func() {
-		waitDone <- cmd.Wait()
-	}()
-
+	// Per the os/exec contract, cmd.Wait() must NOT be called before StdoutPipe
+	// is fully read: Wait closes the pipe and can truncate in-flight reads,
+	// which intermittently yielded empty output on Linux (flaky claude_cli
+	// tests). Wait for stdout to be fully read (process closing stdout = exited)
+	// and only then call Wait.
 	select {
-	case waitErr := <-waitDone:
+	case decodeErr := <-stdoutDone:
 		<-stderrDone
-		decodeErr := <-stdoutDone
+		waitErr := cmd.Wait()
 		if waitErr != nil {
 			// Even on non-zero exit, claude may have written a JSON array to
 			// stdout containing a "result" entry with is_error=true (e.g. API
@@ -189,9 +189,9 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 		// Kill the whole process group so child commands spawned by Claude (e.g.
 		// make/go build) don't survive the timeout.
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		<-waitDone
-		<-stderrDone
 		<-stdoutDone
+		<-stderrDone
+		_ = cmd.Wait()
 		return fmt.Errorf("claude timed out after %s", p.effectiveTimeout())
 	}
 

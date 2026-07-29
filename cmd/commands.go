@@ -428,19 +428,6 @@ func NewConfigCmd() *cobra.Command {
 			for step, model := range cfg.Models.Steps {
 				fmt.Fprintf(out, "  %s: %s\n", step, model)
 			}
-			fmt.Fprintf(out, "\nAnthropic (legacy):\n")
-			printConfiguredValue(out, "  base_url", cfg.Anthropic.ResolvedBaseURL())
-			if token := cfg.Anthropic.ResolvedAuthToken(); token != "" {
-				src := "yaml"
-				if os.Getenv("ANTHROPIC_AUTH_TOKEN") != "" {
-					src = "env"
-				}
-				fmt.Fprintf(out, "  auth_token: ✓ configured (%s, from %s)\n", maskSecret(token), src)
-			} else {
-				fmt.Fprintf(out, "  auth_token: ✗ not set (set ANTHROPIC_AUTH_TOKEN or anthropic.auth_token)\n")
-			}
-			printConfiguredValue(out, "  model", cfg.Anthropic.ResolvedModel())
-
 			fmt.Fprintf(out, "\nProviders:\n")
 			if len(cfg.Providers) == 0 {
 				fmt.Fprintf(out, "  (none configured)\n")
@@ -453,7 +440,6 @@ func NewConfigCmd() *cobra.Command {
 				} else {
 					fmt.Fprintf(out, "    auth_token: ✗ not set\n")
 				}
-				printConfiguredValue(out, "    model", p.Model)
 			}
 
 			fmt.Fprintf(out, "\nBudget: %s\n", cfg.Budget.Mode)

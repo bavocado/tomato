@@ -179,54 +179,6 @@ workflows:
 	}
 }
 
-// TestAnthropicEnvOverride verifies environment variables take precedence over
-// yaml values for Anthropic connection params (design §2.4: keys via env).
-func TestAnthropicEnvOverride(t *testing.T) {
-	// Isolate from any ambient env on the dev/CI machine.
-	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
-	t.Setenv("ANTHROPIC_BASE_URL", "")
-	t.Setenv("ANTHROPIC_MODEL", "")
-
-	a := AnthropicConfig{
-		BaseURL:   "https://yaml.example.com",
-		AuthToken: "yaml-token",
-		Model:     "yaml-model",
-	}
-
-	// With env cleared, yaml values are used.
-	if got := a.ResolvedAuthToken(); got != "yaml-token" {
-		t.Errorf("expected yaml-token, got %q", got)
-	}
-
-	t.Setenv("ANTHROPIC_AUTH_TOKEN", "env-token")
-	t.Setenv("ANTHROPIC_BASE_URL", "https://env.example.com")
-	t.Setenv("ANTHROPIC_MODEL", "env-model")
-
-	if got := a.ResolvedAuthToken(); got != "env-token" {
-		t.Errorf("env should override yaml token, got %q", got)
-	}
-	if got := a.ResolvedBaseURL(); got != "https://env.example.com" {
-		t.Errorf("env should override yaml base_url, got %q", got)
-	}
-	if got := a.ResolvedModel(); got != "env-model" {
-		t.Errorf("env should override yaml model, got %q", got)
-	}
-}
-
-// TestAnthropicEnvFallbackWhenYamlEmpty verifies env is used even when yaml is
-// blank (the recommended setup: nothing sensitive in git).
-func TestAnthropicEnvFallbackWhenYamlEmpty(t *testing.T) {
-	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
-	a := AnthropicConfig{}
-	if a.ResolvedAuthToken() != "" {
-		t.Error("expected empty token with no yaml and no env")
-	}
-	t.Setenv("ANTHROPIC_AUTH_TOKEN", "only-env")
-	if got := a.ResolvedAuthToken(); got != "only-env" {
-		t.Errorf("expected only-env, got %q", got)
-	}
-}
-
 // TestParseAcceptsLocalRunsOn verifies "local" is accepted (and unset is the
 // default).
 func TestParseAcceptsLocalRunsOn(t *testing.T) {

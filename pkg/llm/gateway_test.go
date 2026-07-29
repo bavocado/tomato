@@ -118,11 +118,12 @@ func TestNewProvider(t *testing.T) {
 }
 
 func TestNewProviderUsesProviderConfigForOpenAI(t *testing.T) {
+	// Model name comes from the model ID's segment after the provider, not from
+	// the provider config — so one provider can serve many models.
 	p, err := NewProvider(ProviderConfig{
-		ModelID:   "glm/glm-5.2",
+		ModelID:   "glm/glm:glm-5.2",
 		BaseURL:   "http://127.0.0.1:1980",
 		AuthToken: "sk-ai-router",
-		Model:     "glm:glm-5.2",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +140,7 @@ func TestNewProviderUsesProviderConfigForOpenAI(t *testing.T) {
 		t.Errorf("expected auth token from config, got %s", prov.APIKey)
 	}
 	if prov.Model() != "glm:glm-5.2" {
-		t.Errorf("expected model glm:glm-5.2, got %s", prov.Model())
+		t.Errorf("expected model glm:glm-5.2 from id, got %s", prov.Model())
 	}
 }
 

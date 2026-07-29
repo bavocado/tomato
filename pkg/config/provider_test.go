@@ -8,7 +8,6 @@ func TestResolveProviderConfigFromProviders(t *testing.T) {
 			"glm": {
 				BaseURL:   "https://glm.example.com",
 				AuthToken: "glm-token",
-				Model:     "glm-5.2",
 			},
 		},
 	}
@@ -20,29 +19,27 @@ func TestResolveProviderConfigFromProviders(t *testing.T) {
 	if p.AuthToken != "glm-token" {
 		t.Errorf("expected glm provider auth token")
 	}
-	if p.Model != "glm-5.2" {
-		t.Errorf("expected glm provider model, got %s", p.Model)
-	}
 }
 
-func TestResolveProviderConfigFallsBackToAnthropic(t *testing.T) {
+// TestResolveProviderConfigAnthropicFromProviders verifies anthropic is looked
+// up as an ordinary provider — there is no longer a separate top-level
+// anthropic field.
+func TestResolveProviderConfigAnthropicFromProviders(t *testing.T) {
 	cfg := &Config{
-		Anthropic: AnthropicConfig{
-			BaseURL:   "https://anthropic.example.com",
-			AuthToken: "anthropic-token",
-			Model:     "claude-test",
+		Providers: map[string]ProviderConnectionConfig{
+			"anthropic": {
+				BaseURL:   "https://anthropic.example.com",
+				AuthToken: "anthropic-token",
+			},
 		},
 	}
 
 	p := cfg.ResolveProviderConfig("anthropic/claude-test")
 	if p.BaseURL != "https://anthropic.example.com" {
-		t.Errorf("expected legacy anthropic base_url, got %s", p.BaseURL)
+		t.Errorf("expected anthropic provider base_url, got %s", p.BaseURL)
 	}
 	if p.AuthToken != "anthropic-token" {
-		t.Errorf("expected legacy anthropic auth token")
-	}
-	if p.Model != "claude-test" {
-		t.Errorf("expected legacy anthropic model, got %s", p.Model)
+		t.Errorf("expected anthropic provider auth token")
 	}
 }
 

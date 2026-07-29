@@ -140,3 +140,62 @@ func assertContainsAll(t *testing.T, prompt string, required []string) {
 		}
 	}
 }
+
+func TestRunSpecPrefersIdeaMD(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := filepath.Join(dir, "docs", "specs", "feat")
+	os.MkdirAll(featureDir, 0755)
+	os.WriteFile(filepath.Join(featureDir, "idea.md"), []byte("the md idea"), 0644)
+	os.WriteFile(filepath.Join(featureDir, "idea.txt"), []byte("the txt idea"), 0644)
+	var got string
+	cfg := &StepConfig{
+		RepoDir: dir, FeatureDir: featureDir, Feature: "feat", ModelName: "glm/glm-5.2",
+		LLMStream: func(m []runner.Message, onChunk func(string)) error {
+			got = m[1].Content // user message
+			onChunk("# PRD")
+			return nil
+		},
+	}
+	if res := runSpec(cfg, nil); !res.Success {
+		t.Fatalf("runSpec failed: %s", res.Error)
+	}
+	if !strings.Contains(got, "the md idea") || strings.Contains(got, "the txt idea") {
+		t.Errorf("expected idea.md content injected, got: %s", got)
+	}
+}
+
+func TestRunSpecFallsBackToIdeaTxt(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := filepath.Join(dir, "docs", "specs", "feat")
+	os.MkdirAll(featureDir, 0755)
+	os.WriteFile(filepath.Join(featureDir, "idea.txt"), []byte("legacy idea"), 0644)
+	var got string
+	cfg := &StepConfig{
+		RepoDir: dir, FeatureDir: featureDir, Feature: "feat", ModelName: "glm/glm-5.2",
+		LLMStream: func(m []runner.Message, onChunk func(string)) error {
+			got = m[1].Content
+			onChunk("# PRD")
+			return nil
+		},
+	}
+	if res := runSpec(cfg, nil); !res.Success {
+		t.Fatalf("runSpec failed: %s", res.Error)
+	}
+	if !strings.Contains(got, "legacy idea") {
+		t.Errorf("expected idea.txt content injected, got: %s", got)
+	}
+}
+
+func TestRunSpecFailsWhenBothEmpty(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := filepath.Join(dir, "docs", "specs", "feat")
+	os.MkdirAll(featureDir, 0755)
+	cfg := &StepConfig{
+		RepoDir: dir, FeatureDir: featureDir, Feature: "feat", ModelName: "glm/glm-5.2",
+		LLMStream: func(m []runner.Message, onChunk func(string)) error { return nil },
+	}
+	res := runSpec(cfg, nil)
+	if res.Success {
+		t.Fatal("expected failure when no idea present")
+	}
+}

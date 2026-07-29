@@ -1,7 +1,10 @@
 package steps
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/bavocado/tomato/pkg/model"
 	"github.com/bavocado/tomato/pkg/runner"
@@ -80,13 +83,32 @@ func init() {
 }
 
 func runSpec(cfg *StepConfig, args []string) *model.StepResult {
-	// Input: user's rough idea (idea.txt); Output: generated PRD (prd.md)
-	ideaPath := filepath.Join(cfg.FeatureDir, "idea.txt")
+	// Input: user's idea (idea.md preferred for sub-features from `tomato decompose`,
+	// idea.txt legacy). Output: prd.md.
+	//
+	// SpecPrompt's placeholder is {{.idea.txt}}, but buildMessages keys on basename,
+	// so feeding idea.md would not inject. Read the idea here, render it into the
+	// prompt manually, and pass inputFiles=nil to avoid basename re-keying.
+	ideaPath := filepath.Join(cfg.FeatureDir, "idea.md")
+	if _, err := os.Stat(ideaPath); err != nil {
+		ideaPath = filepath.Join(cfg.FeatureDir, "idea.txt")
+	}
 	prdPath := filepath.Join(cfg.FeatureDir, "prd.md")
+
+	idea, _ := os.ReadFile(ideaPath)
+	if strings.TrimSpace(string(idea)) == "" {
+		return &model.StepResult{
+			StepName: "spec",
+			Success:  false,
+			Error:    fmt.Sprintf("no idea provided. Write your requirement to %s (idea.md or idea.txt) before running tomato", filepath.Join(cfg.FeatureDir, "idea.md")),
+		}
+	}
+
+	prompt := strings.ReplaceAll(SpecPrompt, "{{.idea.txt}}", string(idea))
 	return runner.Execute(
 		"spec",
-		SpecPrompt,
-		[]string{ideaPath},
+		prompt,
+		nil,
 		[]string{prdPath},
 		cfg.RepoDir,
 		cfg.ModelName,

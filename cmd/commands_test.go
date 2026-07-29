@@ -89,6 +89,37 @@ func TestRunDecomposeGenerateWritesSourceDesign(t *testing.T) {
 	}
 }
 
+func TestRunDecomposeGenerateCreatesFeatureDir(t *testing.T) {
+	dir := t.TempDir()
+	// Feature dir does NOT exist yet - generate must create it (the real-world
+	// first-run case, e.g. `tomato decompose --input x` on a fresh feature).
+	featureDir := filepath.Join(dir, "docs", "specs", "feat")
+
+	inputPath := filepath.Join(dir, "design.md")
+	os.WriteFile(inputPath, []byte("# Design"), 0644)
+
+	cfg := &steps.StepConfig{
+		RepoDir:    dir,
+		FeatureDir: featureDir,
+		Feature:    "feat",
+	}
+
+	originalStep, err := steps.Get("decompose")
+	if err == nil {
+		t.Cleanup(func() { steps.Register("decompose", originalStep) })
+	}
+	steps.Register("decompose", func(cfg *steps.StepConfig, args []string) *model.StepResult {
+		return &model.StepResult{StepName: "decompose", Success: true}
+	})
+
+	if err := runDecomposeGenerate(cfg, inputPath, false); err != nil {
+		t.Fatalf("runDecomposeGenerate failed when feature dir was absent: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(featureDir, "source-design.md")); err != nil {
+		t.Errorf("expected source-design.md written into a freshly created feature dir, got: %v", err)
+	}
+}
+
 func TestRunDecomposeApplyHappyPath(t *testing.T) {
 	dir := t.TempDir()
 	featureDir := filepath.Join(dir, "docs", "specs", "feat")

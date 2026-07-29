@@ -526,6 +526,9 @@ func runDecomposeGenerate(cfg *steps.StepConfig, input string, force bool) error
 		return fmt.Errorf("--input %s is empty", input)
 	}
 	sourcePath := filepath.Join(cfg.FeatureDir, "source-design.md")
+	if err := os.MkdirAll(cfg.FeatureDir, 0755); err != nil {
+		return fmt.Errorf("creating feature dir %s: %w", cfg.FeatureDir, err)
+	}
 	if err := os.WriteFile(sourcePath, data, 0644); err != nil {
 		return fmt.Errorf("writing source-design.md: %w", err)
 	}

@@ -72,16 +72,19 @@ func TestRunDecomposeGenerateWritesSourceDesign(t *testing.T) {
 		}
 	})
 
-	err = runDecomposeGenerate(cfg, inputPath, false)
+	err = runDecomposeGenerate(cfg, inputPath, false, false)
 	if err != nil {
 		t.Fatalf("runDecomposeGenerate failed: %v", err)
 	}
 
-	// Verify source-design.md was written
-	sourceDesignPath := filepath.Join(featureDir, "source-design.md")
+	// With no explicit --feature, the parent name is derived from the design
+	// title "# Design". "design" is a boilerplate suffix → empty → fallback
+	// "source", so artifacts land under docs/specs/source/, not the branch name.
+	derivedDir := filepath.Join(dir, "docs", "specs", "source")
+	sourceDesignPath := filepath.Join(derivedDir, "source-design.md")
 	data, err := os.ReadFile(sourceDesignPath)
 	if err != nil {
-		t.Fatalf("source-design.md not written: %v", err)
+		t.Fatalf("source-design.md not written to design-derived dir %s: %v", derivedDir, err)
 	}
 
 	if string(data) != inputContent {
@@ -112,17 +115,21 @@ func TestRunDecomposeGenerateCreatesFeatureDir(t *testing.T) {
 		return &model.StepResult{StepName: "decompose", Success: true}
 	})
 
-	if err := runDecomposeGenerate(cfg, inputPath, false); err != nil {
+	if err := runDecomposeGenerate(cfg, inputPath, false, false); err != nil {
 		t.Fatalf("runDecomposeGenerate failed when feature dir was absent: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(featureDir, "source-design.md")); err != nil {
-		t.Errorf("expected source-design.md written into a freshly created feature dir, got: %v", err)
+	// Parent derived from "# Design" → "source"; dir is created fresh.
+	derivedDir := filepath.Join(dir, "docs", "specs", "source")
+	if _, err := os.Stat(filepath.Join(derivedDir, "source-design.md")); err != nil {
+		t.Errorf("expected source-design.md written into a freshly created design-derived dir %s, got: %v", derivedDir, err)
 	}
 }
 
 func TestRunDecomposeApplyHappyPath(t *testing.T) {
 	dir := t.TempDir()
-	featureDir := filepath.Join(dir, "docs", "specs", "feat")
+	// source-design.md title "# Parent design" derives parent "parent", so the
+	// decomposition + design must live there for apply to find them.
+	featureDir := filepath.Join(dir, "docs", "specs", "parent")
 	os.MkdirAll(featureDir, 0755)
 
 	// Create a valid decomposition.md with YAML block
@@ -176,14 +183,17 @@ func TestRunDecomposeApplyHappyPath(t *testing.T) {
 		Feature:    "feat",
 	}
 
-	err := runDecomposeApply(cfg, false)
+	err := runDecomposeApply(cfg, false, false)
 	if err != nil {
 		t.Fatalf("runDecomposeApply failed: %v", err)
 	}
 
-	// Verify sub-feature directories were created
-	f001Dir := filepath.Join(dir, "docs", "specs", "feat-f001")
-	f002Dir := filepath.Join(dir, "docs", "specs", "feat-f002")
+	// Parent derived from "# Parent design" → "parent" (boilerplate "design"
+	// dropped). Sub-features and orchestration use the derived parent, not the
+	// pre-set "feat" feature.
+	derivedDir := filepath.Join(dir, "docs", "specs", "parent")
+	f001Dir := filepath.Join(dir, "docs", "specs", "parent-f001")
+	f002Dir := filepath.Join(dir, "docs", "specs", "parent-f002")
 
 	if _, err := os.Stat(f001Dir); os.IsNotExist(err) {
 		t.Fatalf("sub-feature directory %s not created", f001Dir)
@@ -200,10 +210,10 @@ func TestRunDecomposeApplyHappyPath(t *testing.T) {
 		}
 	}
 
-	// Verify orchestration.yaml was created
-	orchPath := filepath.Join(featureDir, "orchestration.yaml")
+	// Verify orchestration.yaml was created in the derived parent dir
+	orchPath := filepath.Join(derivedDir, "orchestration.yaml")
 	if _, err := os.Stat(orchPath); os.IsNotExist(err) {
-		t.Fatalf("orchestration.yaml not created in %s", featureDir)
+		t.Fatalf("orchestration.yaml not created in %s", derivedDir)
 	}
 }
 
@@ -212,8 +222,11 @@ func TestRunDecomposeGenerateExistingNoForce(t *testing.T) {
 	featureDir := filepath.Join(dir, "docs", "specs", "feat")
 	os.MkdirAll(featureDir, 0755)
 
-	// Create existing decomposition.md
-	existingDecompPath := filepath.Join(featureDir, "decomposition.md")
+	// "# New design" derives parent "new"; pre-create a decomposition.md there
+	// so the no-force guard trips.
+	derivedDir := filepath.Join(dir, "docs", "specs", "new")
+	os.MkdirAll(derivedDir, 0755)
+	existingDecompPath := filepath.Join(derivedDir, "decomposition.md")
 	os.WriteFile(existingDecompPath, []byte("# Existing decomposition"), 0644)
 
 	inputPath := filepath.Join(dir, "design.md")
@@ -225,9 +238,45 @@ func TestRunDecomposeGenerateExistingNoForce(t *testing.T) {
 		Feature:    "feat",
 	}
 
-	err := runDecomposeGenerate(cfg, inputPath, false)
+	err := runDecomposeGenerate(cfg, inputPath, false, false)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("expected 'already exists' error, got %v", err)
+	}
+}
+
+func TestRunDecomposeGenerateExplicitFeatureOverridesDesign(t *testing.T) {
+	dir := t.TempDir()
+	// Without --feature the parent would be derived from "# Parent design" →
+	// "parent"; with an explicit feature it must be honored as-is.
+	featureDir := filepath.Join(dir, "docs", "specs", "feat")
+	os.MkdirAll(featureDir, 0755)
+
+	inputPath := filepath.Join(dir, "design.md")
+	os.WriteFile(inputPath, []byte("# Parent design\n"), 0644)
+
+	cfg := &steps.StepConfig{
+		RepoDir:    dir,
+		FeatureDir: featureDir,
+		Feature:    "feat",
+	}
+
+	originalStep, err := steps.Get("decompose")
+	if err == nil {
+		t.Cleanup(func() { steps.Register("decompose", originalStep) })
+	}
+	steps.Register("decompose", func(cfg *steps.StepConfig, args []string) *model.StepResult {
+		// Explicit feature must survive — not be overwritten by the design title.
+		if cfg.Feature != "feat" {
+			t.Errorf("explicit --feature should win, got %q", cfg.Feature)
+		}
+		return &model.StepResult{StepName: "decompose", Success: true}
+	})
+
+	if err := runDecomposeGenerate(cfg, inputPath, false, true); err != nil {
+		t.Fatalf("runDecomposeGenerate failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(featureDir, "source-design.md")); err != nil {
+		t.Errorf("expected artifacts under the explicit feature dir %s: %v", featureDir, err)
 	}
 }
 

@@ -495,6 +495,7 @@ func NewDecomposeCmd() *cobra.Command {
 		input, _ := cmd.Flags().GetString("input")
 		apply, _ := cmd.Flags().GetBool("apply")
 		force, _ := cmd.Flags().GetBool("force")
+		featureExplicit := cmd.Flags().Changed("feature")
 
 		if input != "" && apply {
 			return fmt.Errorf("--input and --apply are mutually exclusive")
@@ -503,9 +504,9 @@ func NewDecomposeCmd() *cobra.Command {
 			return fmt.Errorf("usage: tomato decompose --input <doc> | tomato decompose --apply")
 		}
 		if apply {
-			return runDecomposeApply(cfg, force)
+			return runDecomposeApply(cfg, force, featureExplicit)
 		}
-		return runDecomposeGenerate(cfg, input, force)
+		return runDecomposeGenerate(cfg, input, force, featureExplicit)
 	})
 	cmd.Flags().String("input", "", "path to the design document to decompose")
 	cmd.Flags().Bool("apply", false, "materialize sub-features from decomposition.md")
@@ -514,16 +515,22 @@ func NewDecomposeCmd() *cobra.Command {
 	return cmd
 }
 
-func runDecomposeGenerate(cfg *steps.StepConfig, input string, force bool) error {
-	if !force && outputsExist(cfg.FeatureDir, "decomposition.md") {
-		return fmt.Errorf("decomposition.md already exists. Use --force to overwrite")
-	}
+func runDecomposeGenerate(cfg *steps.StepConfig, input string, force bool, featureExplicit bool) error {
 	data, err := os.ReadFile(input)
 	if err != nil {
 		return fmt.Errorf("reading --input: %w", err)
 	}
 	if strings.TrimSpace(string(data)) == "" {
 		return fmt.Errorf("--input %s is empty", input)
+	}
+	// The parent feature name comes from the design doc's title, not the git
+	// branch — otherwise running decompose on branch "feat/x" labels every
+	// sub-feature "x-f001". An explicit --feature still wins.
+	if !featureExplicit {
+		applyParentFeature(cfg, decompose.ParentFeatureFromDesign(string(data)))
+	}
+	if !force && outputsExist(cfg.FeatureDir, "decomposition.md") {
+		return fmt.Errorf("decomposition.md already exists. Use --force to overwrite")
 	}
 	sourcePath := filepath.Join(cfg.FeatureDir, "source-design.md")
 	if err := os.MkdirAll(cfg.FeatureDir, 0755); err != nil {
@@ -540,7 +547,14 @@ func runDecomposeGenerate(cfg *steps.StepConfig, input string, force bool) error
 	return nil
 }
 
-func runDecomposeApply(cfg *steps.StepConfig, force bool) error {
+func runDecomposeApply(cfg *steps.StepConfig, force bool, featureExplicit bool) error {
+	// Re-derive the parent feature from the design doc so apply lands sub-features
+	// under the same parent dir that generate used, regardless of the current branch.
+	if !featureExplicit {
+		if design, err := os.ReadFile(filepath.Join(cfg.FeatureDir, "source-design.md")); err == nil {
+			applyParentFeature(cfg, decompose.ParentFeatureFromDesign(string(design)))
+		}
+	}
 	decompPath := filepath.Join(cfg.FeatureDir, "decomposition.md")
 	content, err := os.ReadFile(decompPath)
 	if err != nil {
@@ -566,4 +580,14 @@ func runDecomposeApply(cfg *steps.StepConfig, force bool) error {
 	}
 	fmt.Printf("✓ decomposed into %d sub-features; orchestration: %s/orchestration.yaml\n", len(d.Features), cfg.FeatureDir)
 	return nil
+}
+
+// applyParentFeature overrides the resolved feature and its artifact dir.
+// Use it only when the feature was not given explicitly via --feature.
+func applyParentFeature(cfg *steps.StepConfig, feature string) {
+	if feature == "" {
+		return
+	}
+	cfg.Feature = feature
+	cfg.FeatureDir = steps.FeatureDir(cfg.RepoDir, feature)
 }

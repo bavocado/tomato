@@ -149,6 +149,7 @@ func SwitchBackToMain(repoDir string) error {
 	}
 	return nil
 }
+
 // before staging and committing generated changes. The feature branch is based
 // on the freshest available main:
 //

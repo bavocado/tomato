@@ -20,7 +20,7 @@ func priorityRank(p string) int {
 // first), ties broken by MoSCoW priority, then spikes before non-spikes, then
 // id for stability. Uses Kahn's algorithm layered by "all deps satisfied".
 func Order(d *Decomposition) []SubFeature {
-	deps := map[string]int{}        // remaining unsatisfied deps per id
+	deps := map[string]int{}            // remaining unsatisfied deps per id
 	dependents := map[string][]string{} // dep -> ids that need it
 	for _, f := range d.Features {
 		deps[f.ID] = len(f.DependsOn)

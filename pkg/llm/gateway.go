@@ -1,146 +1,33 @@
 package llm
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 )
 
-// OpenAIProvider implements Provider for the OpenAI-compatible protocol.
-type OpenAIProvider struct {
-	BaseURL   string
-	APIKey    string
-	modelName string
-}
-
-// chatRequest is the OpenAI chat completion request body.
-type chatRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream"`
-}
-
-// chatStreamChunk is a single SSE chunk from the streaming response.
-type chatStreamChunk struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	Model   string `json:"model"`
-	Choices []struct {
-		Index int `json:"index"`
-		Delta struct {
-			Role    string `json:"role,omitempty"`
-			Content string `json:"content,omitempty"`
-		} `json:"delta"`
-	} `json:"choices"`
-}
-
-func (p *OpenAIProvider) Model() string {
-	return p.modelName
-}
-
-func (p *OpenAIProvider) Stream(messages []Message, onChunk func(string)) error {
-	body := chatRequest{
-		Model:    p.Model(),
-		Messages: messages,
-		Stream:   true,
-	}
-
-	jsonData, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("marshaling request: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", chatCompletionsURL(p.BaseURL), bytes.NewReader(jsonData))
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.APIKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("calling LLM: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("LLM returned status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			break
-		}
-
-		var chunk chatStreamChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue // skip malformed chunks
-		}
-		for _, choice := range chunk.Choices {
-			onChunk(choice.Delta.Content)
-		}
-	}
-
-	return scanner.Err()
-}
-
 // NewProvider creates a Provider from a ProviderConfig.
 //
-// Routing:
-//   - anthropic/* → ClaudeCLIProvider (shells out to the `claude` CLI).
-//   - Any other provider with a base_url + auth_token → OpenAIProvider talking
-//     directly to that OpenAI-compatible endpoint over HTTP. This covers the
-//     ai-router setups used for glm/deepseek/ark in tomato.yaml: routing them
-//     through the claude CLI stalled because claude hangs on init when pointed
-//     at a non-Anthropic endpoint, so direct HTTP is the reliable path.
-//   - Otherwise → OpenAIProvider against the provider's default base URL.
+// All providers route through the claude CLI (ClaudeCLIProvider). ai-router
+// fronts non-Anthropic models (glm/ark/deepseek) as Anthropic-protocol
+// endpoints (/v1/messages), which the claude CLI speaks natively. Going through
+// the CLI (rather than OpenAI-compatible HTTP) lets the CLI manage max_tokens
+// and handle thinking blocks - so thinking models like ark's glm-5.2 don't get
+// truncated to an empty response when the upstream's default max_tokens is
+// consumed entirely by reasoning. A provider configured with base_url +
+// auth_token is injected via ANTHROPIC_BASE_URL/AUTH_TOKEN env; one without
+// uses the claude CLI's own defaults.
 func NewProvider(cfg ProviderConfig) (Provider, error) {
 	parts := strings.SplitN(cfg.ModelID, "/", 2)
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid model format %q, expected provider/model", cfg.ModelID)
 	}
 
-	providerName := parts[0]
-	modelName := parts[1]
-
 	baseURL := firstNonEmpty(cfg.BaseURL, cfg.AnthropicURL)
 	authToken := firstNonEmpty(cfg.AuthToken, cfg.AnthropicKey)
 	// The model name always comes from the model ID's segment after the
 	// provider ("/"). A provider carries no model of its own, so one provider
 	// can serve many models (e.g. an ai-router fronting glm and ark).
-	configModel := modelName
-
-	// Only the native Anthropic models go through the claude CLI.
-	if providerName == "anthropic" {
-		return NewClaudeCLIProvider(cfg.ModelID, baseURL, authToken, configModel, cfg.SessionID, cfg.RepoDir)
-	}
-
-	// A provider configured with its own base_url + auth_token (e.g. glm/ark/
-	// deepseek fronted by ai-router) speaks OpenAI-compatible HTTP directly.
-	if baseURL != "" && authToken != "" {
-		return &OpenAIProvider{
-			BaseURL:   baseURL,
-			APIKey:    authToken,
-			modelName: configModel,
-		}, nil
-	}
-
-	return &OpenAIProvider{
-		BaseURL:   defaultBaseURL(providerName),
-		APIKey:    cfg.APIKey,
-		modelName: modelName,
-	}, nil
+	return NewClaudeCLIProvider(cfg.ModelID, baseURL, authToken, parts[1], cfg.SessionID, cfg.RepoDir)
 }
 
 func firstNonEmpty(values ...string) string {
@@ -150,34 +37,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-// baseURLs maps provider names to their API endpoints.
-var baseURLs = map[string]string{
-	"openai":   "https://api.openai.com/v1",
-	"glm":      "https://open.bigmodel.cn/api/paas/v4",
-	"deepseek": "https://api.deepseek.com",
-}
-
-func defaultBaseURL(provider string) string {
-	if url, ok := baseURLs[provider]; ok {
-		return url
-	}
-	return "https://api.openai.com/v1"
-}
-
-// chatCompletionsURL resolves the chat-completions endpoint for a base URL.
-// Known base URLs already include an API version segment (OpenAI's /v1, GLM's
-// /v4), but bare host:port endpoints fronted by ai-router (e.g.
-// http://127.0.0.1:1980) do not and need /v1 prepended, otherwise the request
-// 404s on /chat/completions.
-func chatCompletionsURL(baseURL string) string {
-	for _, v := range []string{"/v1", "/v2", "/v4"} {
-		if strings.Contains(baseURL, v) {
-			return baseURL + "/chat/completions"
-		}
-	}
-	return baseURL + "/v1/chat/completions"
 }
 
 // EnvKeyName returns the environment variable name for a provider's API key/token.

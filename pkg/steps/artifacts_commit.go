@@ -57,20 +57,26 @@ func hasStagedPath(repoDir, path string) bool {
 }
 
 // CommitAllChanges stages and commits ALL working-tree changes (source code +
-// docs artifacts). It is used after review_loop fix rounds so that impl fix
+// docs artifacts). It is used after impl (verb="feat", so the implementation
+// lands on the feature branch regardless of whether review later finds
+// blocking issues) and after review_loop fix rounds (verb="fix", so impl fix
 // changes to source files are committed alongside the docs artifacts, not left
-// uncommitted in the working tree. .tomato/ stays untracked via .gitignore.
+// uncommitted in the working tree). .tomato/ stays untracked via .gitignore.
+//
+// The verb prefixes the message: "<verb>: <feature> code changes after <step>"
+// (e.g. "feat: grape-f003 code changes after impl",
+// "fix: grape-f003 code changes after fix-r1").
 //
 // It is a no-op when there is nothing staged after `git add -A`. Best-effort:
 // errors are surfaced by the caller as warnings, never as step failures.
-func CommitAllChanges(repoDir, feature, stepName string) error {
+func CommitAllChanges(repoDir, feature, stepName, verb string) error {
 	if err := runGitCmd(repoDir, "add", "-A"); err != nil {
 		return fmt.Errorf("staging all changes: %w", err)
 	}
 	if !hasStagedChanges(repoDir) {
 		return nil
 	}
-	msg := fmt.Sprintf("fix: %s code changes after %s", feature, stepName)
+	msg := fmt.Sprintf("%s: %s code changes after %s", verb, feature, stepName)
 	if err := runGitCmd(repoDir, "commit", "-m", msg); err != nil {
 		return fmt.Errorf("committing code changes: %w", err)
 	}

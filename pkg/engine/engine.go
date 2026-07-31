@@ -235,7 +235,7 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 			fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit feature artifacts: %v\n", err)
 		}
 		if stepCfg.Name == "fast" {
-			if err := steps.CommitAllChanges(e.RepoDir, e.Feature, stepCfg.Name); err != nil {
+			if err := steps.CommitAllChanges(e.RepoDir, e.Feature, stepCfg.Name, "fix"); err != nil {
 				fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit fast-mode changes: %v\n", err)
 			}
 		}
@@ -271,6 +271,19 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 				}
 			} else if opts.Fast {
 				fmt.Printf("⚡ fast mode: skipped architecture rewrite\n")
+			}
+
+			// Commit the impl's source-code changes (not just the docs artifacts,
+			// which CommitFeatureArtifacts already staged above). Without this,
+			// an impl whose review passes with no blocking issues never enters a
+			// fix round, so CommitAllChanges is never called and the source
+			// changes leak into the working tree when the workflow switches back
+			// to main. Fast mode already committed via the stepCfg.Name=="fast"
+			// branch above, so skip here to avoid a duplicate commit.
+			if !opts.Fast {
+				if err := steps.CommitAllChanges(e.RepoDir, e.Feature, "impl", "feat"); err != nil {
+					fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit impl code changes: %v\n", err)
+				}
 			}
 		}
 
@@ -379,7 +392,7 @@ func (e *Engine) runReviewLoop(cfg config.WorkflowStep) error {
 			// Commit source-code changes the fix round made (impl rewrites
 			// source files under internal/, cmd/, etc.). pr already ran before
 			// review_loop, so without this the fix code would stay uncommitted.
-			if err := steps.CommitAllChanges(e.RepoDir, e.Feature, fmt.Sprintf("fix-r%d", round)); err != nil {
+			if err := steps.CommitAllChanges(e.RepoDir, e.Feature, fmt.Sprintf("fix-r%d", round), "fix"); err != nil {
 				fmt.Fprintf(os.Stderr, "⚠  warning: failed to commit fix code changes: %v\n", err)
 			}
 			e.callAdapter(prBridge, adapter.CmdUpdatePR, map[string]string{

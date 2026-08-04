@@ -239,6 +239,43 @@ func TestClaudeTimeoutDefault(t *testing.T) {
 	}
 }
 
+func TestClaudeToolResultUsesRTKCompression(t *testing.T) {
+	logs := captureStderr(t, func() {
+		logClaudeUser(map[string]interface{}{
+			"type": "user",
+			"message": map[string]interface{}{
+				"content": []interface{}{
+					map[string]interface{}{
+						"type":    "tool_result",
+						"content": strings.Repeat("ok line\n", 160) + "final line\n",
+					},
+				},
+			},
+		})
+	})
+	for _, want := range []string{"tool_result: ok", "repeated 159 more times", "final line", "compression: rtk raw="} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected compressed logs to contain %q, got:\n%s", want, logs)
+		}
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	fn()
+	os.Stderr = old
+	w.Close()
+	data, _ := io.ReadAll(r)
+	r.Close()
+	return string(data)
+}
+
 // TestClaudeCLIProviderIgnoresSessionID verifies tomato starts each claude
 // invocation fresh even if an old caller still passes SessionID.
 func TestClaudeCLIProviderIgnoresSessionID(t *testing.T) {

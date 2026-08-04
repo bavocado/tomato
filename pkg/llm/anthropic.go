@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bavocado/tomato/pkg/codegraph"
+	"github.com/bavocado/tomato/pkg/compress"
 )
 
 // ClaudeCLIProvider runs the `claude` CLI tool to execute AI tasks.
@@ -335,7 +336,11 @@ func logClaudeUser(m map[string]interface{}) {
 			status = "error"
 		}
 		fmt.Fprintf(os.Stderr, "[claude]\n  tool_result: %s\n", status)
-		writeClaudeLogBlock("output", claudeToolResultContent(part["content"]))
+		result := compress.RTKToolOutput("tool_result", claudeToolResultContent(part["content"]), status == "error")
+		writeClaudeLogBlock("output", result.Text)
+		if result.Truncated {
+			fmt.Fprintf(os.Stderr, "  compression: rtk raw=%d kept=%d\n", result.RawBytes, result.KeptBytes)
+		}
 	}
 }
 

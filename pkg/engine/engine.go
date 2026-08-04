@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/bavocado/tomato/pkg/adapter"
 	"github.com/bavocado/tomato/pkg/archive"
@@ -170,6 +171,7 @@ func fastSteps(in []config.WorkflowStep, fast bool) []config.WorkflowStep {
 }
 
 func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
+	start := time.Now()
 	stepsToRun, err := e.planStepsChecked(workflowName, opts)
 	if err != nil {
 		return err
@@ -299,6 +301,10 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 		fmt.Fprintf(os.Stderr, "⚠  warning: failed to clear resume state: %v\n", err)
 	}
 
+	// Read the PR reference while still on the feature branch: pr.json lives
+	// there and is gone from the working tree once we switch back to main.
+	prRef := steps.ReadPRRef(e.featureDir())
+
 	// Switch back to main and sync so local main stays clean. Best-effort: a
 	// failure here is a warning, not fatal (the workflow itself succeeded).
 	if err := steps.SwitchBackToMain(e.RepoDir); err != nil {
@@ -306,7 +312,31 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 	} else {
 		fmt.Printf("🌿 switched back to main (synced with origin/main)\n")
 	}
+
+	fmt.Print(formatSummary(workflowName, e.Feature, prRef, time.Since(start)))
 	return nil
+}
+
+// formatSummary renders the end-of-run summary: PR URL, task title, branch,
+// and total wall-clock duration. It is a pure function so tests can assert on
+// its output without capturing stdout. A missing PR (no pr step / no pr.json)
+// degrades gracefully to "(none)"/"(unknown)" rather than panicking.
+func formatSummary(workflow, feature string, prRef steps.PRRef, duration time.Duration) string {
+	prURL := prRef.URL
+	if prURL == "" {
+		prURL = "(none)"
+	}
+	branch := prRef.Branch
+	if branch == "" {
+		branch = "(unknown)"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "📋 workflow %q complete: %s\n", workflow, feature)
+	fmt.Fprintf(&b, "  PR:     %s\n", prURL)
+	fmt.Fprintf(&b, "  title:  feat: %s\n", feature)
+	fmt.Fprintf(&b, "  branch: %s\n", branch)
+	fmt.Fprintf(&b, "  time:   %s\n", duration.Round(time.Second).String())
+	return b.String()
 }
 
 // stepStatus maps a completed step to its external status label (design §2.1).

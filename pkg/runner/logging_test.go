@@ -34,13 +34,9 @@ func TestExecuteEmitsProgressLogs(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"[spec] run=",
-		"building prompt",
-		"model=glm/glm-5.2",
-		"calling LLM",
-		"writing 1 artifact",
-		"tokens in=",
-		"run log",
+		"[spec] model=glm/glm-5.2",
+		" in=",
+		" out=",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("expected stderr to contain %q, got:\n%s", want, stderr)

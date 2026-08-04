@@ -38,10 +38,8 @@ func Execute(
 ) *model.StepResult {
 	start := time.Now()
 	runID := runid.Generate()
-	logStep(stepName, "run=%s model=%s start", runID, modelName)
 
 	// Build prompts from input files
-	logStep(stepName, "building prompt from %d input file(s)", len(inputFiles))
 	messages, err := buildMessages(stepName, promptTemplate, inputFiles, repoDir)
 	if err != nil {
 		return failure(stepName, runID, start, modelName, err)
@@ -56,7 +54,6 @@ func Execute(
 
 	if tracker != nil {
 		estimatedIn := budget.EstimateTokens(promptText)
-		logStep(stepName, "estimated input tokens=%d", estimatedIn)
 		// Global check first. Only "fail" aborts; "warn" (the design default)
 		// and "degrade" proceed (design §2.9.4). The old code hard-failed on
 		// every policy, which reversed "warn" — the documented default is
@@ -86,7 +83,6 @@ func Execute(
 			if multiOutputWithoutMarkers(cached, outputFiles) {
 				logStep(stepName, "cache entry missing artifact markers — ignoring")
 			} else {
-				logStep(stepName, "cache hit — skipping LLM call")
 				responseText = cached
 				cacheHit = true
 			}
@@ -94,8 +90,6 @@ func Execute(
 	}
 
 	if !cacheHit {
-		// Call LLM
-		logStep(stepName, "calling LLM model=%s", modelName)
 		var response strings.Builder
 		err = llmStream(messages, func(chunk string) {
 			response.WriteString(chunk)
@@ -140,7 +134,11 @@ func Execute(
 		tokensIn = 0
 		tokensOut = 0
 	}
-	logStep(stepName, "LLM completed: tokens in=%d out=%d response_chars=%d", tokensIn, tokensOut, len(responseText))
+	if cacheHit {
+		logStep(stepName, "model=%s  (cache hit)", modelName)
+	} else {
+		logStep(stepName, "model=%s  in=%d out=%d", modelName, tokensIn, tokensOut)
+	}
 
 	if tracker != nil {
 		tracker.Record(stepName, tokensIn, tokensOut)
@@ -152,7 +150,6 @@ func Execute(
 	}
 
 	// Write output artifacts — support artifact splitting via ---TOMATO-ARTIFACT: filename--- markers
-	logStep(stepName, "writing %d artifact(s)", len(outputFiles))
 	artifactParts := splitArtifacts(responseText)
 	// Snapshot dir: a stable copy of each output lives under
 	// .tomato/runs/<run-id>/artifacts/ so `tomato history diff` can compare two
@@ -178,7 +175,6 @@ func Execute(
 		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
 			return failure(stepName, runID, start, modelName, err)
 		}
-		logStep(stepName, "wrote artifact %s (%d bytes)", fullPath, len(content))
 
 		// Mirror the artifact into the run snapshot dir for history diff.
 		if err := os.MkdirAll(snapshotDir, 0755); err != nil {
@@ -207,7 +203,6 @@ func Execute(
 		OutputFiles: outputFiles,
 	}
 	writeMeta(meta, repoDir, runID)
-	logStep(stepName, "run log written: .tomato/runs/%s/meta.json", runID)
 
 	return &model.StepResult{
 		StepName:   stepName,

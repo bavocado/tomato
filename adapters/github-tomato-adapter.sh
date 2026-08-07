@@ -13,7 +13,9 @@ case "$SUBCOMMAND" in
     ;;
   create-task)
     TITLE=$(jq -r '.title // "Untitled task"' /dev/stdin)
-    gh issue create --title "$TITLE" --body "$(jq -r '.description // ""' /dev/stdin)" --json number,url
+    URL=$(gh issue create --title "$TITLE" --body "$(jq -r '.description // ""' /dev/stdin)")
+    REF="${URL##*/}"
+    jq -nc --arg task_ref "$REF" --arg url "$URL" '{task_ref:$task_ref, url:$url}'
     ;;
   update-status)
     TASK_REF=$(jq -r '.task_ref // ""' /dev/stdin)

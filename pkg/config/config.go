@@ -15,6 +15,7 @@ type Config struct {
 	Providers   map[string]ProviderConnectionConfig `yaml:"providers"`
 	Budget      BudgetConfig                        `yaml:"budget"`
 	Impl        ImplConfig                          `yaml:"impl"`
+	Task        TaskConfig                          `yaml:"task"`
 	Workflows   map[string]WorkflowDef              `yaml:"workflows"`
 	CustomSteps map[string]CustomStepDef            `yaml:"custom_steps"`
 	Adapters    map[string]AdapterDef               `yaml:"adapters"`
@@ -80,6 +81,24 @@ func (c ImplConfig) RewriteArchEnabled() bool {
 		return true
 	}
 	return *c.RewriteArch
+}
+
+// TaskConfig holds toggleable optional behaviors for the task step.
+type TaskConfig struct {
+	// CreateIssue controls whether the task step creates a tracker issue via
+	// the task adapter (e.g. gh issue create for the github adapter). Defaults
+	// to false: review findings are tracked as PR comments + fix rounds, not as
+	// separate GitHub issues. Set true to restore issue creation.
+	CreateIssue *bool `yaml:"create_issue"`
+}
+
+// CreateIssueEnabled reports whether the task step should create a tracker
+// issue. Defaults to false (no issue created).
+func (c TaskConfig) CreateIssueEnabled() bool {
+	if c.CreateIssue == nil {
+		return false
+	}
+	return *c.CreateIssue
 }
 
 // WorkflowDef defines a named workflow.

@@ -475,6 +475,7 @@ func (e *Engine) stepConfig(featureDir, feature, stepName string) *steps.StepCon
 		AnthropicKey:   provider.AuthToken,
 		BudgetTracker:  e.Tracker,
 		ShareSession:   true,
+		CreateIssue:    e.Config.Task.CreateIssueEnabled(),
 	}
 	if e.LLMStream != nil {
 		cfg.LLMStream = e.LLMStream

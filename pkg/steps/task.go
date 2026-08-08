@@ -14,6 +14,12 @@ func init() {
 }
 
 func runTask(cfg *StepConfig, args []string) *model.StepResult {
+	// When issue creation is disabled (the default), the task step is a no-op:
+	// review findings are tracked as PR comments + fix rounds, not as separate
+	// GitHub issues. emitStatus skips status updates when no task_ref exists.
+	if !cfg.CreateIssue {
+		return &model.StepResult{StepName: "task", Success: true}
+	}
 	br := cfg.Adapters.For("task")
 	if br == nil {
 		return &model.StepResult{

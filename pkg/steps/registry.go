@@ -38,6 +38,10 @@ type StepConfig struct {
 	// (SaveSession), so all steps in one `tomato run` share one session.
 	// Single-shot commands leave this false to start fresh.
 	ShareSession bool
+	// CreateIssue, when true, makes the task step create a tracker issue via
+	// the task adapter (gh issue create). Defaults to false: review findings
+	// live as PR comments + fix rounds, not as GitHub issues.
+	CreateIssue bool
 }
 
 // StepFunc is a function that executes a step and returns a result.

@@ -357,7 +357,7 @@ func TestRunTaskUsesAdapterAndWritesRef(t *testing.T) {
 	reg := adapter.NewRegistry()
 	reg.Set("task", &adapter.Bridge{Bin: bin})
 
-	cfg := &StepConfig{RepoDir: repo, FeatureDir: featureDir, Feature: "current-feature", Adapters: reg}
+	cfg := &StepConfig{RepoDir: repo, FeatureDir: featureDir, Feature: "current-feature", Adapters: reg, CreateIssue: true}
 	result := runTask(cfg, nil)
 	if !result.Success {
 		t.Fatalf("runTask failed: %s", result.Error)
@@ -371,6 +371,35 @@ func TestRunTaskUsesAdapterAndWritesRef(t *testing.T) {
 	ref := ReadTaskRef(featureDir)
 	if ref.TaskRef != "ISSUE-7" {
 		t.Errorf("task.json task_ref = %q, want ISSUE-7", ref.TaskRef)
+	}
+}
+
+// TestRunTaskSkipsAdapterWhenCreateIssueDisabled verifies that with the default
+// CreateIssue=false, the task step is a no-op: it does not call the adapter and
+// writes no task_ref, so review findings stay on the PR instead of as issues.
+func TestRunTaskSkipsAdapterWhenCreateIssueDisabled(t *testing.T) {
+	repo := t.TempDir()
+	featureDir := filepath.Join(repo, "docs", "specs", "current-feature")
+	os.MkdirAll(featureDir, 0755)
+	os.WriteFile(filepath.Join(featureDir, "prd.md"), []byte("# PRD"), 0644)
+
+	logPath := filepath.Join(repo, "adapter.log")
+	bin := fakeAdapter(t, repo, logPath, `{"task_ref":"ISSUE-7","url":"https://example.com/i/7"}`)
+	reg := adapter.NewRegistry()
+	reg.Set("task", &adapter.Bridge{Bin: bin})
+
+	cfg := &StepConfig{RepoDir: repo, FeatureDir: featureDir, Feature: "current-feature", Adapters: reg}
+	result := runTask(cfg, nil)
+	if !result.Success {
+		t.Fatalf("runTask failed: %s", result.Error)
+	}
+
+	logData, _ := os.ReadFile(logPath)
+	if string(logData) != "" {
+		t.Errorf("adapter must not be invoked when CreateIssue=false; log:\n%s", string(logData))
+	}
+	if ref := ReadTaskRef(featureDir); ref.TaskRef != "" {
+		t.Errorf("task_ref must be empty when CreateIssue=false, got %q", ref.TaskRef)
 	}
 }
 

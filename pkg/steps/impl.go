@@ -3,6 +3,7 @@ package steps
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/bavocado/tomato/pkg/model"
 	"github.com/bavocado/tomato/pkg/runner"
@@ -38,7 +39,7 @@ For each file, include:
 
 ## 3. Patch Plan
 For each file, describe the exact change.
-If writing code, include complete code blocks or unified diff-style snippets.
+When writing or modifying code, output a fenced code block whose opening-fence info string is "<lang>:<path>" — for example a fence line of: go:internal/admin/handler.go — followed by the COMPLETE new file content, then the closing fence. Only these path-fenced blocks are extracted and written to disk automatically; code in plain fences without a path is NOT applied. One block per file.
 
 ## 4. Commands to Run
 List build/test/lint commands that should verify the change.
@@ -70,12 +71,25 @@ func runImpl(cfg *StepConfig, args []string) *model.StepResult {
 	// round has a distinct cache key. Without this, fix-r2 would hit fix-r1's
 	// cache (same prompt + model) and the fix would be a no-op.
 	promptVersion := cfg.PromptVersion
+	prompt := ImplPrompt
 	if len(args) > 0 {
 		promptVersion = promptVersion + "-" + args[0]
+		// In a review_loop fix round (args[0]="fix-r<N>"), feed the prior
+		// round's review comments so the model fixes the blocking issues
+		// rather than regenerating from scratch. Without this, fix rounds
+		// reproduce the same impl-output and the next review finds the same
+		// blocking issues again.
+		if strings.HasPrefix(args[0], "fix-r") {
+			round := strings.TrimPrefix(args[0], "fix-r")
+			reviewPath := filepath.Join(cfg.FeatureDir, "reviews", "r"+round+"-comments.md")
+			if comments, err := os.ReadFile(reviewPath); err == nil && strings.TrimSpace(string(comments)) != "" {
+				prompt = prompt + "\n\n## Prior Review Comments (round r" + round + ")\nAddress every blocking issue below. The path-fenced code blocks you output in §3 must land the fixes in the actual source files (not just described in prose).\n\n" + string(comments)
+			}
+		}
 	}
 	result := runner.Execute(
 		"impl",
-		ImplPrompt,
+		prompt,
 		inputFiles,
 		[]string{filepath.Join(cfg.FeatureDir, "impl-output.md")},
 		cfg.RepoDir,

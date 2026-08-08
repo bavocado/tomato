@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 )
 
-// SessionRef is legacy state from the old shared claude-session flow.
-// Runtime code clears this file and no longer resumes it.
+// SessionRef is the persisted claude session id for a repo, used to share one
+// claude session across all LLM steps in a `tomato run` (see NewLLMStream).
 type SessionRef struct {
 	SessionID string `json:"session_id"`
 }
@@ -19,8 +19,8 @@ func SessionPath(repoDir string) string {
 	return filepath.Join(repoDir, ".tomato", "session.json")
 }
 
-// LoadSession reads legacy persisted session state. A missing or malformed file
-// yields an empty SessionRef.
+// LoadSession reads the persisted session id. A missing or malformed file
+// yields an empty SessionRef (caller starts a fresh session).
 func LoadSession(repoDir string) SessionRef {
 	data, err := os.ReadFile(SessionPath(repoDir))
 	if err != nil {
@@ -33,8 +33,7 @@ func LoadSession(repoDir string) SessionRef {
 	return ref
 }
 
-// SaveSession persists legacy session state. New runtime code should not call
-// this; it remains for compatibility with old tests/tools.
+// SaveSession persists the session id so the next LLM step can resume it.
 func SaveSession(repoDir string, ref SessionRef) error {
 	path := SessionPath(repoDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -47,7 +46,8 @@ func SaveSession(repoDir string, ref SessionRef) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// ClearSession removes any persisted legacy session.
+// ClearSession removes any persisted session, forcing the next step to start a
+// fresh claude session (used at the start of each `tomato run`).
 func ClearSession(repoDir string) error {
 	path := SessionPath(repoDir)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

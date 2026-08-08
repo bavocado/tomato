@@ -53,13 +53,24 @@ func TestCreateTaskNeedsInput(t *testing.T) {
 }
 
 func TestCreatePRArgsIncludesHeadBranch(t *testing.T) {
-	args := createPRArgs("feat: demo", "body", "tomato/demo")
+	args := createPRArgs("feat: demo", "body", "tomato/demo", false)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "--head tomato/demo") {
 		t.Fatalf("expected --head tomato/demo in args, got %v", args)
 	}
 	if strings.Contains(joined, "--json") {
 		t.Fatalf("create-pr args must not include unsupported --json flag: %v", args)
+	}
+	if strings.Contains(joined, "--draft") {
+		t.Fatalf("non-draft PR must not include --draft: %v", args)
+	}
+}
+
+func TestCreatePRArgsDraftWhenRequested(t *testing.T) {
+	args := createPRArgs("feat: demo", "body", "tomato/demo", true)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--draft") {
+		t.Fatalf("draft PR must include --draft: %v", args)
 	}
 }
 

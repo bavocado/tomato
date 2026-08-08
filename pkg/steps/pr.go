@@ -49,7 +49,7 @@ func runPR(cfg *StepConfig, args []string) *model.StepResult {
 		Repo:   getGitRemote(cfg),
 		Title:  fmt.Sprintf("feat: %s", cfg.Feature),
 		Body:   body,
-		Draft:  true,
+		Draft:  false,
 	}
 	inputJSON, _ := json.Marshal(input)
 

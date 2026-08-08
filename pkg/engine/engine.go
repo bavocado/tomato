@@ -177,8 +177,10 @@ func (e *Engine) RunWithOptions(workflowName string, opts RunOptions) error {
 		return err
 	}
 
-	// Clear any legacy claude session file so no step can accidentally resume
-	// stale context. Each LLM step now starts its own fresh claude invocation.
+	// Start each workflow run from a fresh claude session: clear any session
+	// saved by a prior run so step 1 doesn't resume stale context. Steps within
+	// this run then share one session (ShareSession in NewLLMStream). --resume
+	// keeps the prior run's session for crash recovery.
 	if !opts.Resume {
 		llm.ClearSession(e.RepoDir)
 	}
@@ -472,6 +474,7 @@ func (e *Engine) stepConfig(featureDir, feature, stepName string) *steps.StepCon
 		AnthropicURL:   provider.BaseURL,
 		AnthropicKey:   provider.AuthToken,
 		BudgetTracker:  e.Tracker,
+		ShareSession:   true,
 	}
 	if e.LLMStream != nil {
 		cfg.LLMStream = e.LLMStream
@@ -567,7 +570,7 @@ func (e *Engine) emitStatus(featureDir, status string) {
 // the root architecture.md from the actual implementation. Failures are
 // non-fatal (the impl step itself already succeeded) and are surfaced as warnings.
 func (e *Engine) rewriteArchitecture(featureDir string) error {
-	cfg := e.stepConfig(featureDir, e.Feature, "design")
+	cfg := e.stepConfig(featureDir, e.Feature, "rewrite-arch")
 
 	result := steps.RewriteArchitecture(cfg)
 	if !result.Success {

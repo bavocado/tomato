@@ -34,7 +34,14 @@ func Run(name string, def config.CustomStepDef, cfg Config) *model.StepResult {
 	for _, out := range def.Outputs {
 		outputs = append(outputs, filepath.Join(cfg.RepoDir, out))
 	}
-	return runner.Execute(name, string(promptBytes), inputs, outputs, cfg.RepoDir, cfg.ModelName, cfg.LLMStream, "custom-v1", cfg.BudgetTracker)
+	// A custom step's `model:` field, when set, overrides the model resolved
+	// from models.steps.<name>. This lets a custom step pin a specific model
+	// without adding an entry to the steps map.
+	modelName := cfg.ModelName
+	if def.Model != "" {
+		modelName = def.Model
+	}
+	return runner.Execute(name, string(promptBytes), inputs, outputs, cfg.RepoDir, modelName, cfg.LLMStream, "custom-v1", cfg.BudgetTracker)
 }
 
 // expandInputs resolves input glob patterns relative to the repo dir. Go's

@@ -46,11 +46,3 @@ func EnvKeyName(provider string) string {
 	}
 	return fmt.Sprintf("%s_API_KEY", strings.ToUpper(strings.ReplaceAll(provider, "-", "_")))
 }
-
-// ResolveModel picks the model for a step, falling back to the default.
-func ResolveModel(stepName string, config map[string]string) string {
-	if m, ok := config[stepName]; ok {
-		return m
-	}
-	return config["default"]
-}

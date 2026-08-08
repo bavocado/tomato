@@ -30,8 +30,9 @@ type ClaudeCLIProvider struct {
 	ClaudeModel string
 	CLIPath     string
 	Timeout     time.Duration
-	// SessionID is kept for compatibility with older callers. It is ignored:
-	// tomato starts every claude invocation in a fresh session.
+	// SessionID, when non-empty, is passed to the claude CLI as --resume so this
+	// invocation continues an existing session, sharing context across workflow
+	// steps. Empty starts a fresh session.
 	SessionID string
 	// LastSessionID is set by Stream to the session id of this invocation.
 	LastSessionID string
@@ -73,6 +74,12 @@ func (p *ClaudeCLIProvider) Stream(messages []Message, onChunk func(string)) err
 	}
 	if p.ModelName != "" {
 		args = append(args, "--model", p.ModelName)
+	}
+	// Resume an existing claude session when one was carried over from a prior
+	// step, so the whole workflow shares one session's context. Each step still
+	// pins its own --model above, so per-step model routing is preserved.
+	if p.SessionID != "" {
+		args = append(args, "--resume", p.SessionID)
 	}
 	// When the repo has a codegraph index, mount it as an MCP server so the
 	// LLM can call codegraph_explore for surgical code context (fewer file

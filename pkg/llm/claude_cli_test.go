@@ -276,9 +276,10 @@ func captureStderr(t *testing.T, fn func()) string {
 	return string(data)
 }
 
-// TestClaudeCLIProviderIgnoresSessionID verifies tomato starts each claude
-// invocation fresh even if an old caller still passes SessionID.
-func TestClaudeCLIProviderIgnoresSessionID(t *testing.T) {
+// TestClaudeCLIProviderResumesSessionID verifies that when SessionID is set,
+// the claude CLI is invoked with --resume <id> so this step continues the prior
+// step's session. It also captures the new session id emitted by claude.
+func TestClaudeCLIProviderResumesSessionID(t *testing.T) {
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "fake-claude")
 	argFile := filepath.Join(dir, "args.txt")
@@ -304,8 +305,8 @@ func TestClaudeCLIProviderIgnoresSessionID(t *testing.T) {
 
 	args, _ := os.ReadFile(argFile)
 	argsStr := string(args)
-	if strings.Contains(argsStr, "--resume") || strings.Contains(argsStr, "prior-session-abc") {
-		t.Errorf("expected no session resume args, got %q", argsStr)
+	if !strings.Contains(argsStr, "--resume") || !strings.Contains(argsStr, "prior-session-abc") {
+		t.Errorf("expected --resume prior-session-abc in args, got %q", argsStr)
 	}
 	if p.LastSessionID != "new-session-xyz" {
 		t.Errorf("expected LastSessionID=new-session-xyz, got %q", p.LastSessionID)

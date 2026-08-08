@@ -21,7 +21,8 @@ type ProviderConfig struct {
 	BaseURL   string // passed to claude as ANTHROPIC_BASE_URL
 	AuthToken string // passed to claude as ANTHROPIC_AUTH_TOKEN
 
-	// Deprecated: ignored. Claude CLI invocations always start fresh.
+	// SessionID, when non-empty, is passed through to the claude CLI as --resume,
+	// so successive steps in a workflow share one claude session.
 	SessionID string
 
 	// RepoDir is the project root. When it contains a .codegraph/ index, the

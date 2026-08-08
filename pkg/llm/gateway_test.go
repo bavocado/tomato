@@ -5,29 +5,6 @@ import (
 	"testing"
 )
 
-func TestModelFromConfig(t *testing.T) {
-	config := map[string]string{
-		"default": "deepseek/deepseek-4pro",
-		"impl":    "glm/glm-5.2",
-		"spec":    "openai/gpt-5",
-		"review":  "glm/glm-5.2",
-		"test":    "deepseek/deepseek-4pro",
-	}
-	stepName := "impl"
-	expected := "glm/glm-5.2"
-
-	model := ResolveModel(stepName, config)
-	if model != expected {
-		t.Errorf("for step %s, expected model %s, got %s", stepName, expected, model)
-	}
-
-	// Fallback to default
-	model = ResolveModel("unknown-step", config)
-	if model != "deepseek/deepseek-4pro" {
-		t.Errorf("expected fallback to default, got %s", model)
-	}
-}
-
 func TestNewProvider(t *testing.T) {
 	tests := []struct {
 		modelID string

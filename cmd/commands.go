@@ -309,7 +309,7 @@ func NewTestCmd() *cobra.Command {
 func NewPRCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pr",
-		Short: "Push branch + open/update PR (draft)",
+		Short: "Push branch + open/update PR",
 		RunE: withFeatureAndModel(func(cfg *steps.StepConfig, args []string) error {
 			result := runStepWithName("pr", cfg)
 			printResult(result)

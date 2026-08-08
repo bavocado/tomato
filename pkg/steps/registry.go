@@ -33,6 +33,11 @@ type StepConfig struct {
 	// codebase set this to stop claude from exploring the repo via MCP, which
 	// otherwise stalls the step for minutes on indexed repos.
 	DisableCodegraph bool
+	// ShareSession, when true, resumes the claude session saved by the prior
+	// step (LoadSession) and persists this step's session id afterwards
+	// (SaveSession), so all steps in one `tomato run` share one session.
+	// Single-shot commands leave this false to start fresh.
+	ShareSession bool
 }
 
 // StepFunc is a function that executes a step and returns a result.
@@ -59,11 +64,14 @@ func Get(name string) (StepFunc, error) {
 }
 
 // NewLLMStream creates a streaming function from a StepConfig.
-// Each call starts a fresh claude invocation; tomato does not resume or persist
-// claude sessions between workflow steps.
+//
+// When cfg.ShareSession is true (workflow steps), it resumes the claude session
+// saved by the prior step and persists this step's session id afterwards, so all
+// steps in one `tomato run` share one claude session's context. Each step still
+// pins its own model via cfg.ModelName, so per-step model routing is preserved.
+// When false (single-shot commands), each invocation starts a fresh session.
 func NewLLMStream(cfg *StepConfig) runner.LLMFunc {
 	return func(messages []runner.Message, onChunk func(string)) error {
-		_ = llm.ClearSession(cfg.RepoDir)
 		llmMessages := make([]llm.Message, len(messages))
 		for i, m := range messages {
 			llmMessages[i] = llm.Message{Role: m.Role, Content: m.Content}
@@ -76,17 +84,39 @@ func NewLLMStream(cfg *StepConfig) runner.LLMFunc {
 		if cfg.DisableCodegraph {
 			providerRepoDir = ""
 		}
+
+		// Session sharing: resume the prior step's claude session so the whole
+		// workflow shares one context. Single-shot commands start fresh instead.
+		var sessionID string
+		if cfg.ShareSession {
+			sessionID = llm.LoadSession(cfg.RepoDir).SessionID
+		} else {
+			_ = llm.ClearSession(cfg.RepoDir)
+		}
+
 		provider, err := llm.NewProvider(llm.ProviderConfig{
 			ModelID:   cfg.ModelName,
 			APIKey:    cfg.APIKey,
 			BaseURL:   cfg.AnthropicURL,
 			AuthToken: cfg.AnthropicKey,
 			RepoDir:   providerRepoDir,
+			SessionID: sessionID,
 		})
 		if err != nil {
 			return err
 		}
-		return provider.Stream(llmMessages, onChunk)
+		streamErr := provider.Stream(llmMessages, onChunk)
+		// Persist this invocation's session id so the next step can resume it.
+		// Best-effort: a Stream error may still have produced a session id (e.g.
+		// truncated JSON), and saving it lets later steps recover the context.
+		if cfg.ShareSession {
+			if cp, ok := provider.(*llm.ClaudeCLIProvider); ok {
+				if sid := cp.LastSessionID; sid != "" {
+					_ = llm.SaveSession(cfg.RepoDir, llm.SessionRef{SessionID: sid})
+				}
+			}
+		}
+		return streamErr
 	}
 }
 
